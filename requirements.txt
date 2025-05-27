@@ -1,0 +1,14 @@
+crewai
+crewai-tools
+beautifulsoup4
+google-cloud-bigquery
+langchain-community
+langchain-google-vertexai
+langchain-google-community[featurestore]
+openpyxl
+pandas
+pypdf
+python-dotenv
+requests
+python-docx
+dotenv
