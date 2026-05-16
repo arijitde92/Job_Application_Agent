@@ -1,14 +1,14 @@
-crewai
+crewai[anthropic]
 crewai-tools
 beautifulsoup4
 google-cloud-bigquery
 langchain-community
-langchain-google-vertexai
+langchain-google-genai
 langchain-google-community[featurestore]
+langchain-text-splitters
 openpyxl
 pandas
 pypdf
 python-dotenv
 requests
 python-docx
-dotenv

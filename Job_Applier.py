@@ -37,7 +37,7 @@ job_applier_crew = Crew(
 )
 
 if __name__ == "__main__":
-    job_posting_url = 'https://www.linkedin.com/jobs/view/4233531687'
+    job_posting_url = 'https://www.linkedin.com/jobs/view/4414651966'
     job_details = extract_linkedin_job_details(job_posting_url, json_output=True)
     job_name = job_details['Job Name']
     company_name = job_details['Company Name']

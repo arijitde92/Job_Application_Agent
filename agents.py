@@ -1,6 +1,6 @@
 from time import sleep
 from typing import List, Union
-from crewai import Agent
+from crewai import Agent, LLM
 from crewai_tools import (
   FileReadTool,
   ScrapeWebsiteTool,
@@ -15,6 +15,14 @@ import os
 from dotenv import load_dotenv
 from github_repo_extractor import process_github_repo_to_bq, query_github_vector_store
 load_dotenv()
+
+# LLM configuration — Claude Sonnet 4
+gemini_llm = LLM(
+    model="gemini/gemini-2.5-flash",
+    api_key=os.environ.get("GEMINI_API_KEY"),
+    temperature=0.7,
+    max_tokens=8000
+)
 
 search_tool = SerperDevTool()
 scrape_tool = ScrapeWebsiteTool()
@@ -83,7 +91,7 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
     for repo_url in github_repo_urls[:GITHUB_REPO_SEARCH_LIMIT]:
         process_github_repo_to_bq(repo_url,
                                   file_filter=lambda file_path: file_path.endswith(('.py', '.ipynb', '.md', '.txt')),
-                                  access_token=os.environ.get('GITHUB_PERSONAL_ACCESS_TOKENB_TOKEN'))
+                                  access_token=os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN'))
         sleep(20)
     
     return github_repo_urls[:GITHUB_REPO_SEARCH_LIMIT]  # Limit to first GITHUB_REPO_SEARCH_LIMIT repositories
@@ -211,6 +219,7 @@ researcher = Agent(
     role="Tech Job Researcher",
     goal="Make sure to do careful and detailed analysis on job posting to help job applicants",
     tools = [extract_linkedin_job_details_tool],
+    llm=gemini_llm,
     verbose=True,
     backstory=(
         "As a Job Researcher, your prowess in "
@@ -228,6 +237,7 @@ github_project_summarizer = Agent(
     role="GitHub Project Summarizer",
     goal="Summarize the user's most relevant GitHub projects for a job application, highlighting tech stacks, languages, frameworks, tools, and cloud technologies used.",
     tools=[extract_github_repos_tool, repo_content_searcher],
+    llm=gemini_llm,
     verbose=True,
     backstory=(
         "You are an expert in analyzing GitHub repositories and summarizing project experience for job applications. "
@@ -243,6 +253,7 @@ profiler = Agent(
     role="Personal Profiler for Engineers",
     goal="Do incredible analytical research on job applicants to help them stand out in the job market",
     tools = [read_resume, semantic_search_resume],
+    llm=gemini_llm,
     verbose=True,
     backstory=(
         "Equipped with analytical prowess, you dissect and synthesize information "
@@ -257,6 +268,7 @@ resume_strategist = Agent(
     goal="Find all the best ways to make a resume stand out in the job market.",
     tools = [scrape_tool, search_tool,
              read_resume, semantic_search_resume],
+    llm=gemini_llm,
     verbose=True,
     backstory=(
         "With a strategic mind and an eye for detail, you "
@@ -273,6 +285,7 @@ interview_preparer = Agent(
          "based on the resume and job requirements",
     tools = [scrape_tool, search_tool,
              read_resume, semantic_search_resume],
+    llm=gemini_llm,
     verbose=True,
     backstory=(
         "Your role is crucial in anticipating the dynamics of "

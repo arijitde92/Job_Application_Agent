@@ -136,15 +136,15 @@ def extract_github_repo_contents(repo_url, save_to_disk=True):
 # === New Section: LangChain GitHub Loader + BigQuery Vector Store ===
 from langchain_community.document_loaders import GithubFileLoader
 from langchain_google_community import BigQueryVectorStore
-from langchain_google_vertexai import VertexAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import os
 
 # GCP details
-PROJECT_ID = "inbound-byway-457408-c9"
-DATASET_NAME = "job_applier_app"
-LOCATION = "asia-south2"
-TABLE_NAME = "github_repo_data"
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "project-69718baa-b6cc-44ec-9fb")
+DATASET_NAME = os.environ.get("GCP_DATASET_NAME", "job_applier_app")
+LOCATION = os.environ.get("GCP_LOCATION", "asia-south2")
+TABLE_NAME = os.environ.get("GCP_TABLE_NAME", "github_repo_data")
 
 # Function to process a GitHub repo and store embeddings in BigQuery
 def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_token=None):
@@ -210,9 +210,9 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
     doc_splits = text_splitter.split_documents(documents)
     print(f"Loaded and split {len(doc_splits)} document chunks from {repo_url}")
 
-    # 3. Create Vertex AI Embeddings
-    embedding_model = VertexAIEmbeddings(
-        model_name="text-embedding-005", project=PROJECT_ID
+    # 3. Create Vertex AI Embeddings using the new genai package
+    embedding_model = GoogleGenerativeAIEmbeddings(
+        model="text-embedding-005", project=PROJECT_ID, vertexai=True
     )
 
     # 4. Create BigQuery Vector Store
@@ -224,8 +224,21 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
         embedding=embedding_model,
     )
 
-    # 5. Add documents to the vector store
-    doc_ids = bq_store.add_documents(doc_splits)
+    # 5. Add documents to the vector store in batches to avoid Vertex AI limits
+    # Max token limit per request is 20,000 tokens. With chunk_size=1000 characters,
+    # 20 chunks is ~5,000-8,000 tokens, which safely stays under the limit.
+    batch_size = 20
+    doc_ids = []
+    for i in range(0, len(doc_splits), batch_size):
+        batch = doc_splits[i:i + batch_size]
+        try:
+            ids = bq_store.add_documents(batch)
+            if ids:
+                doc_ids.extend(ids)
+            print(f"Added batch of {len(batch)} documents.")
+        except Exception as e:
+            print(f"Error adding batch to BigQuery: {e}")
+            
     print(f"Added {len(doc_ids)} documents to BigQuery vector store.")
 
 def query_github_vector_store(query, top_k=5):
@@ -234,8 +247,8 @@ def query_github_vector_store(query, top_k=5):
     Returns a list of (content, metadata) tuples.
     """
     # 1. Create Vertex AI Embeddings (same as used for ingestion)
-    embedding_model = VertexAIEmbeddings(
-        model_name="text-embedding-005", project=PROJECT_ID
+    embedding_model = GoogleGenerativeAIEmbeddings(
+        model="text-embedding-005", project=PROJECT_ID, vertexai=True
     )
 
     # 2. Create BigQuery Vector Store
