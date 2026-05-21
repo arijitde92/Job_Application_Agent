@@ -44,12 +44,12 @@ if __name__ == "__main__":
     appicant_name = 'Arijit De'
     github_url = 'https://github.com/arijitde92'
     resume_path = 'Arijit_De_Resume.md'
-    personal_summary = """Arijit De is an AI and machine learning specialist with experience in deep learning, backend development, and cloud deployment.
-        At mVizn Pte. Ltd., he enhances semantic segmentation models for 3D point clouds, improving performance and scalability.
-        Previously, at Mercedes-Benz Research and Development India, he advanced ADAS capabilities by training YOLO v3 models for Vulnerable Road User detection.
-        His expertise spans algorithm design, cloud security, and automation.
-        Beyond his professional work, he has built AI-driven projects like an assignment submission portal with automated code evaluation,
-        a spiritual chatbot using LLMs, a GitHub code analysis tool, and a 3D brain segmentation app, showcasing his technical versatility and innovation."""
+    # personal_summary = """Arijit De is an AI and machine learning specialist with experience in deep learning, backend development, and cloud deployment.
+    #     At mVizn Pte. Ltd., he enhances semantic segmentation models for 3D point clouds, improving performance and scalability.
+    #     Previously, at Mercedes-Benz Research and Development India, he advanced ADAS capabilities by training YOLO v3 models for Vulnerable Road User detection.
+    #     His expertise spans algorithm design, cloud security, and automation.
+    #     Beyond his professional work, he has built AI-driven projects like an assignment submission portal with automated code evaluation,
+    #     a spiritual chatbot using LLMs, a GitHub code analysis tool, and a 3D brain segmentation app, showcasing his technical versatility and innovation."""
     job_application_inputs = {
         'applicant_name': appicant_name.replace(' ', '_'),
         'job_posting_url': job_posting_url,
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         'company_name': company_name,
         'github_url': github_url,
         'resume_path': resume_path,
-        'personal_writeup': personal_summary
+        # 'personal_writeup': personal_summary
     }
     print("Job application inputs")
     print(job_application_inputs)

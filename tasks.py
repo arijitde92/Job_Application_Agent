@@ -60,7 +60,7 @@ profile_task = Task(
     description=(
         "Compile a detailed personal and professional profile "
         "Read and semantically understand the resume contents from {resume_path}. "
-        "Using the job requirements received from researcher agent from previous tasks, GitHub projects summary received from github_project_summarizer agent in the previous task, personal write-up ({personal_writeup}) and the resume contents, "
+        "Using the job requirements received from researcher agent from previous tasks, GitHub projects summary received from github_project_summarizer agent in the previous task, and the resume contents, "
         "create a comprehensive profile."
     ),
     context=[research_task, github_summary_task],
