@@ -1,72 +1,83 @@
 from crewai import Crew
 import os
+import json
 from dotenv import load_dotenv
-from webpage_extractor import extract_linkedin_job_details
+from webpage_extractor import extract_linkedin_job_details, JobDetails
 from logger import get_logger, log_token_usage
 
 load_dotenv()
 logger = get_logger(__name__)
 
 from agents import (
-    researcher,
     github_project_summarizer,
     profiler,
     resume_strategist,
-    interview_preparer
+    interview_preparer,
 )
 
 from tasks import (
-    research_task,
     github_summary_task,
     profile_task,
     resume_strategy_task,
-    interview_preparation_task
+    interview_preparation_task,
 )
 
-job_applier_crew = Crew(
-    agents=[researcher,
-            github_project_summarizer,
-            profiler,
-            resume_strategist,
-            interview_preparer],
+# NOTE: researcher and research_task have been removed.
+# Job details are extracted once here and injected into crew inputs as
+# job_details_json so every task can access them directly.
 
-    tasks=[research_task,
-           github_summary_task,
-           profile_task,
-           resume_strategy_task,
-           interview_preparation_task],
+job_applier_crew = Crew(
+    agents=[
+        github_project_summarizer,
+        profiler,
+        resume_strategist,
+        interview_preparer,
+    ],
+    tasks=[
+        github_summary_task,
+        profile_task,
+        resume_strategy_task,
+        interview_preparation_task,
+    ],
     output_log_file="crew_log.txt",
-    tracing=True,  # Enable built-in tracing
-    verbose=True
+    tracing=True,
+    verbose=True,
 )
 
 if __name__ == "__main__":
-    job_posting_url = 'https://www.linkedin.com/jobs/view/4414651966'
-    job_details = extract_linkedin_job_details(job_posting_url, json_output=True)
-    job_name = job_details['Job Name']
-    company_name = job_details['Company Name']
-    appicant_name = 'Arijit De'
+    job_posting_url = 'https://www.linkedin.com/jobs/view/4413867953/'
+
+    # --- Single MCP scrape: extract job details once, reuse everywhere ---
+    logger.info("Job_Applier.py: Extracting job details from: %s", job_posting_url)
+    job_details: JobDetails = extract_linkedin_job_details(job_posting_url)
+    logger.info(
+        "Job_Applier.py: Extracted job '%s' at '%s'",
+        job_details.job_name, job_details.company_name,
+    )
+
+    # Build the JSON passed to all crew tasks — exclude about_company (not needed)
+    job_info = job_details.to_dict()
+    job_info.pop("about_company", None)
+    job_details_json = json.dumps(job_info, indent=2)
+
+    applicant_name = 'Arijit De'
     github_url = 'https://github.com/arijitde92'
     resume_path = 'Arijit_De_Resume.md'
-    # personal_summary = """Arijit De is an AI and machine learning specialist with experience in deep learning, backend development, and cloud deployment.
-    #     At mVizn Pte. Ltd., he enhances semantic segmentation models for 3D point clouds, improving performance and scalability.
-    #     Previously, at Mercedes-Benz Research and Development India, he advanced ADAS capabilities by training YOLO v3 models for Vulnerable Road User detection.
-    #     His expertise spans algorithm design, cloud security, and automation.
-    #     Beyond his professional work, he has built AI-driven projects like an assignment submission portal with automated code evaluation,
-    #     a spiritual chatbot using LLMs, a GitHub code analysis tool, and a 3D brain segmentation app, showcasing his technical versatility and innovation."""
+
     job_application_inputs = {
-        'applicant_name': appicant_name.replace(' ', '_'),
+        'applicant_name': applicant_name.replace(' ', '_'),
         'job_posting_url': job_posting_url,
-        'job_name': job_name,
-        'company_name': company_name,
+        'job_name': job_details.job_name,
+        'company_name': job_details.company_name,
         'github_url': github_url,
         'resume_path': resume_path,
-        # 'personal_writeup': personal_summary
+        'job_details_json': job_details_json,   # injected into every task description
     }
-    logger.info("Job_Applier.py: Job application inputs: %s", job_application_inputs)
-    ### this execution will take a few minutes to run
+
+    logger.info("Job_Applier.py: Job application inputs prepared for '%s' at '%s'",
+                job_details.job_name, job_details.company_name)
     logger.info("Job_Applier.py: Starting job applier crew execution...")
     result = job_applier_crew.kickoff(inputs=job_application_inputs)
-    logger.info("Job_Applier.py: Job applier crew execution completed.")
+    logger.info("Job_Applier.py: Crew execution completed.")
     if hasattr(result, 'token_usage'):
         log_token_usage(result.token_usage, logger)
