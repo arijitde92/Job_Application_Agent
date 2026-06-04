@@ -14,7 +14,9 @@ import json
 import os
 from dotenv import load_dotenv
 from github_repo_extractor import process_github_repo_to_bq, query_github_vector_store
+from logger import get_logger
 load_dotenv()
+logger = get_logger(__name__)
 
 # LLM configuration — Claude Sonnet 4
 gemini_llm = LLM(
@@ -60,10 +62,10 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
         user_name = user_url.split('/')[-1].split('?')[0]
 
         # Fetch the url of each repository
-        print("Searching URL: ", user_url)
+        logger.info("agents.py: Searching URL: %s", user_url)
         response = requests.get(user_url, headers={'User-Agent': "Chrome/51.0.2704.106"})
         if response.status_code != 200:
-            print("Error Occurred: Response Code: ", response.status_code)
+            logger.error("agents.py: Error Occurred: Response Code: %s", response.status_code)
             return github_repo_urls
         html_content = response.content
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -71,7 +73,7 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
         for repo_heading in repo_headings:
             repo_name = repo_heading.a.attrs["href"].split('/')[-1]
             link = 'https://github.com/' + user_name + "/" + repo_name
-            print("Found repo:", link)
+            logger.info("agents.py: Found repo: %s", link)
             github_repo_urls.append(link)
         pages = soup.find_all(attrs={"class": "next_page"})
         if len(pages) > 0:
@@ -83,11 +85,11 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
     
     # Call the function to get repository links
     github_repo_urls = get_repository_links(user_url, [])
-    print(f"Found {len(github_repo_urls)} repositories from {user_url}")
+    logger.info("agents.py: Found %d repositories from %s", len(github_repo_urls), user_url)
     if not github_repo_urls:
-        print("No repositories found or an error occurred.")
+        logger.warning("agents.py: No repositories found or an error occurred.")
         return None
-    print(f"Found {len(github_repo_urls)} repositories for user {user_url}")
+    logger.info("agents.py: Found %d repositories for user %s", len(github_repo_urls), user_url)
     for repo_url in github_repo_urls[:GITHUB_REPO_SEARCH_LIMIT]:
         process_github_repo_to_bq(repo_url,
                                   file_filter=lambda file_path: file_path.endswith(('.py', '.ipynb', '.md', '.txt')),
@@ -297,7 +299,7 @@ interview_preparer = Agent(
 )
 
 if __name__ == "__main__":
-    print("Testing agents.py")
+    logger.info("agents.py: Testing agents.py")
     # print("Testing LinkedIn Job Details Extraction Tool")
     # job_posting_url = "https://www.linkedin.com/jobs/view/4234610887/"
     # job_details = extract_linkedin_job_details_tool.run(url=job_posting_url)

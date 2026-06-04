@@ -1,14 +1,20 @@
 import requests
 from bs4 import BeautifulSoup
 import json
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 def extract_linkedin_job_details(url, json_output=False):
     headers = {
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    logger.info("webpage_extractor.py: Fetching LinkedIn job details from URL: %s", url)
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
+        logger.error("webpage_extractor.py: Failed to fetch LinkedIn job details. Status code: %s", response.status_code)
         return {"error": "Failed to fetch page"}
+    logger.info("webpage_extractor.py: Successfully fetched and parsed LinkedIn job details.")
 
     soup = BeautifulSoup(response.text, "html.parser")
 
@@ -87,6 +93,6 @@ def extract_linkedin_job_details(url, json_output=False):
     return json.dumps(result, indent=2)
 
 if __name__ == "__main__":
-    job_posting_url = "https://www.linkedin.com/jobs/view/4234610887/"
+    job_posting_url = "https://www.linkedin.com/jobs/view/4414651966/"
     job_details = extract_linkedin_job_details(job_posting_url)
-    print(job_details)
+    logger.info("webpage_extractor.py: Job details: %s", job_details)
