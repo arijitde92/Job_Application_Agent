@@ -149,10 +149,14 @@ LOCATION = os.environ.get("GCP_LOCATION", "asia-south2")
 TABLE_NAME = os.environ.get("GCP_TABLE_NAME", "github_repo_data")
 
 # Function to process a GitHub repo and store embeddings in BigQuery
-def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_token=None):
+def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_token=None, dataset_name=None):
     """
     Loads files from a GitHub repo, creates embeddings, and stores them in BigQuery.
+
+    Args:
+        dataset_name: Optional override for the BQ dataset name. Defaults to GCP_DATASET_NAME env var.
     """
+    effective_dataset = dataset_name or DATASET_NAME
     # Extract owner and repo first, and validate the URL
     try:
         owner, repo = parse_github_url(repo_url)
@@ -166,7 +170,7 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
     # Query to check for existing data
     query = f"""
     SELECT COUNT(*) as count
-    FROM `{PROJECT_ID}.{DATASET_NAME}.{TABLE_NAME}`
+    FROM `{PROJECT_ID}.{effective_dataset}.{TABLE_NAME}`
     WHERE repo_username = '{owner}'
     AND repo_name = '{repo}'
     """
@@ -221,7 +225,7 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
     bq_store = BigQueryVectorStore(
         project_id=PROJECT_ID,
         location=LOCATION,
-        dataset_name=DATASET_NAME,
+        dataset_name=effective_dataset,
         table_name=TABLE_NAME,
         embedding=embedding_model,
     )
@@ -243,11 +247,15 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
             
     logger.info("github_repo_extractor.py: Added %d documents to BigQuery vector store.", len(doc_ids))
 
-def query_github_vector_store(query, top_k=5):
+def query_github_vector_store(query, top_k=5, dataset_name=None):
     """
     Query the BigQuery vector store for relevant document chunks using a natural language query.
     Returns a list of (content, metadata) tuples.
+
+    Args:
+        dataset_name: Optional override for the BQ dataset name. Defaults to GCP_DATASET_NAME env var.
     """
+    effective_dataset = dataset_name or DATASET_NAME
     # 1. Create Vertex AI Embeddings (same as used for ingestion)
     embedding_model = GoogleGenerativeAIEmbeddings(
         model="text-embedding-005", project=PROJECT_ID, vertexai=True
@@ -257,7 +265,7 @@ def query_github_vector_store(query, top_k=5):
     bq_store = BigQueryVectorStore(
         project_id=PROJECT_ID,
         location=LOCATION,
-        dataset_name=DATASET_NAME,
+        dataset_name=effective_dataset,
         table_name=TABLE_NAME,
         embedding=embedding_model,
     )

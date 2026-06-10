@@ -2,6 +2,8 @@
 
 A powerful, multi-agent automation system for job applications, leveraging [Crew AI](https://www.crewai.com/) to orchestrate specialized agents that extract, analyze, and summarize job postings, tailor resumes, and prepare interview materials. The system integrates with Google BigQuery and Vertex AI for advanced document storage and semantic search, and features custom tools for LinkedIn and GitHub data extraction.
 
+This project also includes a **Full-Stack Web App version** with a **FastAPI backend** (using Google Cloud SQL MySQL and GCS storage) and a **React + Vite frontend** that displays live agent execution progress via Server-Sent Events (SSE).
+
 ---
 
 ## 🚀 Features
@@ -56,23 +58,29 @@ A powerful, multi-agent automation system for job applications, leveraging [Crew
 
 ### 1. Clone the Repository
 
+This is always the first step. Run:
+
 ```bash
 git clone https://github.com/arijitde92/Job_Application_Agent.git
 cd Job_Application_Agent
 ```
 
-### 2. Install Dependencies
+---
+
+### Option A: Running the Standalone CLI Agent
+
+#### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Environment Variables
+#### 2. Configure Environment Variables
 
 Create a `.env` file in the project root with the following variables:
 
 ```env
-# GitHub API token (for higher rate limits/private repos)
+# GitHub API token
 GITHUB_PERSONAL_ACCESS_TOKEN=your_github_token
 
 # Google Cloud Project details
@@ -86,15 +94,84 @@ GCP_TABLE_NAME=github_repo_data
 VERTEX_AI_MODEL=text-embedding-005
 ```
 
-**Note:**  
-- `GOOGLE_APPLICATION_CREDENTIALS` should point to your GCP service account JSON file with BigQuery and Vertex AI permissions.
-- The default project, dataset, location, and table names are set in the code but can be overridden via environment variables.
-
-### 4. Run the Application
+#### 3. Run the CLI Application
 
 ```bash
 python Job_Applier.py
 ```
+
+---
+
+### Option B: Running the Full-Stack Web App
+
+#### 1. Setup Python Environment & Dependencies
+
+Create and activate a conda environment, then install the backend dependencies:
+
+```bash
+conda create -n job_agent python=3.12 -y
+conda activate job_agent
+pip install -r requirements.txt
+pip install -r backend/requirements.txt
+```
+
+#### 2. Install Node.js
+
+The frontend React application requires Node.js (v18+). If you do not have it installed, please download and install it from the official [Node.js Download Page](https://nodejs.org/en/download).
+
+#### 3. Setup Frontend Dependencies
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+#### 4. Configure Web App Environment Variables
+
+Add the following database and storage configurations to the bottom of your `.env` file:
+
+```env
+# Cloud SQL MySQL (Direct Connection)
+MYSQL_HOST=34.131.150.209
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=JobAgent@2026
+MYSQL_DATABASE=job_applier
+
+# Google Cloud Storage (GCS) for Resumes
+GCS_BUCKET_NAME=job-applier-project-69718baa-b6cc-44ec-9fb-resumes
+
+# JWT Authentication
+# Generate using: python -c "import secrets; print(secrets.token_urlsafe(32))"
+JWT_SECRET_KEY=drUVPzflrCADfaC7HjrydJYPPS_IpspPlXxjOELdfjI
+JWT_ALGORITHM=HS256
+JWT_EXPIRY_MINUTES=1440
+
+# Google OAuth (Optional — for Google Login)
+GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+```
+
+#### 5. Run the Web Application
+
+Start the backend API server and frontend development server in separate terminals:
+
+**Terminal 1 (Backend API):**
+
+```bash
+conda activate job_agent
+uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+**Terminal 2 (Frontend React):**
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open `http://localhost:5173` in your browser.
 
 ---
 
@@ -143,4 +220,4 @@ MIT License
 - [Google Cloud BigQuery](https://cloud.google.com/bigquery)
 - [Vertex AI](https://cloud.google.com/vertex-ai)
 - [LangChain](https://python.langchain.com/)
-- [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/) 
+- [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/)
