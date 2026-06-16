@@ -158,6 +158,9 @@ github_project_summarizer = Agent(
     tools=[extract_github_repos_tool, repo_content_searcher],
     llm=gemini_llm,
     verbose=True,
+    max_iter=8,
+    max_rpm=10,
+    respect_context_window=True,
     backstory=(
         "You are an expert in analyzing GitHub repositories and summarizing project experience for job applications. "
         "You first ensure the user's repositories are indexed in the vector store using the github_repos_extractor tool. "
@@ -171,9 +174,12 @@ github_project_summarizer = Agent(
 profiler = Agent(
     role="Personal Profiler for Engineers",
     goal="Do incredible analytical research on job applicants to help them stand out in the job market",
-    tools = [read_resume, semantic_search_resume],
+    tools=[read_resume, semantic_search_resume],
     llm=gemini_llm,
     verbose=True,
+    max_iter=8,
+    max_rpm=10,
+    respect_context_window=True,
     backstory=(
         "Equipped with analytical prowess, you dissect and synthesize information "
         "from diverse sources to craft comprehensive personal and professional profiles,"
@@ -185,10 +191,12 @@ profiler = Agent(
 resume_strategist = Agent(
     role="Resume Strategist for Engineers",
     goal="Find all the best ways to make a resume stand out in the job market.",
-    tools = [scrape_tool, search_tool,
-             read_resume, semantic_search_resume],
+    tools=[scrape_tool, search_tool, read_resume, semantic_search_resume],
     llm=gemini_llm,
     verbose=True,
+    max_iter=8,
+    max_rpm=10,
+    respect_context_window=True,
     backstory=(
         "With a strategic mind and an eye for detail, you "
         "excel at refining resumes to highlight the most "
@@ -202,10 +210,12 @@ interview_preparer = Agent(
     role="Engineering Interview Preparer",
     goal="Create interview questions and talking points "
          "based on the resume and job requirements",
-    tools = [scrape_tool, search_tool,
-             read_resume, semantic_search_resume],
+    tools=[scrape_tool, search_tool, read_resume, semantic_search_resume],
     llm=gemini_llm,
     verbose=True,
+    max_iter=8,
+    max_rpm=10,
+    respect_context_window=True,
     backstory=(
         "Your role is crucial in anticipating the dynamics of "
         "interviews. With your ability to formulate key questions "

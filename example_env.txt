@@ -23,3 +23,27 @@ BRIGHT_DATA_API_KEY=
 # Logging Configuration
 # Console log level: DEBUG | INFO | WARNING | ERROR | CRITICAL (default: INFO)
 LOG_LEVEL=INFO
+
+# ── Web App Configuration ──────────────────────────────────────────
+# Cloud SQL MySQL
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=
+MYSQL_PASSWORD=
+MYSQL_DATABASE=job_applier
+
+# GCS Bucket for resumes
+GCS_BUCKET_NAME=
+
+# JWT Authentication
+JWT_SECRET_KEY=
+JWT_ALGORITHM=HS256
+JWT_EXPIRY_MINUTES=1440
+
+# Google OAuth (optional — set up in GCP Console)
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+
+# Crew AI
+CREWAI_TOOLS_ALLOW_UNSAFE_PATHS=true
+CREWAI_TRACING_ENABLED=true

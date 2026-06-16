@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
     SERPER_API_KEY: str = Field(default="", description="Serper search API key")
 
+    # ── Crew AI ───────────────────────────────────────────────────────────
+    CREWAI_TOOLS_ALLOW_UNSAFE_PATHS: bool = Field(default=True, description="Allow CrewAI tools to access unsafe paths")
+    CREWAI_TRACING_ENABLED: bool = Field(default=True, description="Enable CrewAI tracing")
+
     # ── Resume Upload ─────────────────────────────────────────────────────
     MAX_RESUME_SIZE_MB: int = Field(default=10, description="Max resume upload size in MB")
 
@@ -89,4 +93,11 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Return a cached Settings instance (reads .env once)."""
-    return Settings()
+    settings = Settings()
+    import os
+    if settings.GOOGLE_APPLICATION_CREDENTIALS:
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
+    # Propagate CrewAI variables to os.environ for libraries that read them directly
+    os.environ["CREWAI_TOOLS_ALLOW_UNSAFE_PATHS"] = str(settings.CREWAI_TOOLS_ALLOW_UNSAFE_PATHS).lower()
+    os.environ["CREWAI_TRACING_ENABLED"] = str(settings.CREWAI_TRACING_ENABLED).lower()
+    return settings

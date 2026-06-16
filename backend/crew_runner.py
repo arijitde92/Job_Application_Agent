@@ -11,6 +11,7 @@ import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any
 
 from sqlalchemy import select, update
@@ -29,6 +30,9 @@ _executor = ThreadPoolExecutor(max_workers=4)
 
 # In-memory progress store: {job_id: {"current_step": str, "error": str|None}}
 progress_store: Dict[int, Dict[str, Any]] = {}
+
+# ── Crew verbose log path ─────────────────────────────────────────────────────
+_LOG_DIR = Path(__file__).parent.parent / "logs"
 
 
 def _update_progress(job_id: int, step: str, error: str = None):
@@ -61,8 +65,6 @@ def _run_crew_sync(
         logger.error("crew_runner.py: Failed to extract job details for job %d: %s", job_id, e)
         raise RuntimeError(f"Failed to extract job details: {e}")
 
-    # Save extracted job details to DB
-    _save_job_details_sync(job_id, job_details)
 
     # Step 2: Write resume to temp file for crew to read
     _update_progress(job_id, "searching_projects")
@@ -92,11 +94,17 @@ def _run_crew_sync(
         resume_strategy_task.output_file = resume_output
         interview_preparation_task.output_file = interview_output
 
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        crew_log_path = str(_LOG_DIR / f"{ts}_crew.log")
+
         crew = Crew(
             agents=[github_project_summarizer, profiler, resume_strategist, interview_preparer],
             tasks=[github_summary_task, profile_task, resume_strategy_task, interview_preparation_task],
             verbose=True,
+            output_log_file=crew_log_path,
         )
+        logger.info("crew_runner.py: Crew verbose log → %s", crew_log_path)
 
         _update_progress(job_id, "tailoring_resume")
 
@@ -112,7 +120,7 @@ def _run_crew_sync(
         }
 
         result = crew.kickoff(inputs=job_application_inputs)
-        logger.info("crew_runner.py: Crew execution completed for job %d", job_id)
+        logger.info("crew_runner.py: Crew execution completed for job %d. Log saved to %s", job_id, crew_log_path)
 
         # Read output files
         tailored_resume_content = ""
@@ -140,38 +148,6 @@ def _run_crew_sync(
             if os.path.exists(path):
                 os.unlink(path)
 
-
-def _save_job_details_sync(job_id: int, job_details):
-    """Save extracted job details to the database (sync, called from thread)."""
-    import asyncio
-
-    async def _save():
-        async with AsyncSessionLocal() as db:
-            await db.execute(
-                update(
-                    __import__("backend.models", fromlist=["Job"]).Job
-                ).where(
-                    __import__("backend.models", fromlist=["Job"]).Job.id == job_id
-                ).values(
-                    job_name=job_details.job_name,
-                    company_name=job_details.company_name,
-                    location=job_details.location,
-                    seniority_level=job_details.seniority_level,
-                    employment_type=job_details.employment_type,
-                    job_function=job_details.job_function,
-                    industry=job_details.industry,
-                    job_description=job_details.job_description,
-                    requirements=job_details.requirements,
-                )
-            )
-            await db.commit()
-
-    # Run async DB update from sync thread
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_save())
-    finally:
-        loop.close()
 
 
 async def run_crew_for_job(
@@ -205,6 +181,26 @@ async def run_crew_for_job(
             github_profile.github_username, github_profile.github_url,
             github_profile.bq_dataset_name, resume_content, job_url,
         )
+
+        # Save extracted job details to DB on the correct async event loop
+        job_details = result["job_details"]
+        async with AsyncSessionLocal() as db:
+            from backend.models import Job
+            await db.execute(
+                update(Job).where(Job.id == job_id).values(
+                    job_name=job_details.job_name,
+                    company_name=job_details.company_name,
+                    location=job_details.location,
+                    seniority_level=job_details.seniority_level,
+                    employment_type=job_details.employment_type,
+                    job_function=job_details.job_function,
+                    industry=job_details.industry,
+                    job_description=job_details.job_description,
+                    requirements=job_details.requirements,
+                )
+            )
+            await db.commit()
+        logger.info("crew_runner.py: Job details saved for job %d", job_id)
 
         # Upload results to GCS
         _update_progress(job_id, "uploading_results")
