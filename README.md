@@ -132,8 +132,10 @@ cd ..
 Add the following database and storage configurations to the bottom of your `.env` file:
 
 ```env
-# Cloud SQL MySQL (Direct Connection)
-MYSQL_HOST=34.131.150.209
+# Cloud SQL MySQL Connection
+# Use 127.0.0.1 when running Cloud SQL Auth Proxy (Recommended)
+# Use 34.131.150.209 for direct connection (requires authorizing your public IP in GCP console)
+MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
 MYSQL_USER=root
 MYSQL_PASSWORD=JobAgent@2026
@@ -153,9 +155,36 @@ GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
 ```
 
-#### 5. Run the Web Application
+#### 5. Setup & Run Cloud SQL Auth Proxy (Recommended)
 
-Start the backend API server and frontend development server in separate terminals:
+Since dynamic public IP addresses change frequently, running the Cloud SQL Auth Proxy is the recommended way to securely connect to the Cloud SQL database from your local development environment without having to configure authorized IP networks in the GCP Console.
+
+##### A. Install the Proxy Client (Linux)
+```bash
+# Download the binary (for 64-bit Linux)
+curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.0/cloud-sql-proxy.linux.amd64
+
+# Make it executable
+chmod +x cloud-sql-proxy
+
+# Move it to a directory in your PATH (optional, but recommended)
+sudo mv cloud-sql-proxy /usr/local/bin/
+```
+
+##### B. Run the Proxy
+Start the proxy in a separate terminal using your GCP Service Account JSON key:
+
+```bash
+cloud-sql-proxy \
+  --credentials-file ./project-69718baa-b6cc-44ec-9fb-17c2c8f0dd9c.json \
+  project-69718baa-b6cc-44ec-9fb:asia-south2:job-applier-mysql
+```
+
+*Note: If port `3306` is already in use by a local MySQL server on your machine, run the proxy on port `3307` using the `--port 3307` flag and update `MYSQL_PORT=3307` in your `.env` file.*
+
+#### 6. Run the Web Application
+
+Start the backend API server and frontend development server in separate terminals (ensure the Cloud SQL Auth Proxy is running if `MYSQL_HOST` is set to `127.0.0.1`):
 
 **Terminal 1 (Backend API):**
 

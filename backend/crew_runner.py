@@ -96,7 +96,7 @@ def _run_crew_sync(
 
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        crew_log_path = str(_LOG_DIR / f"{ts}_crew.log")
+        crew_log_path = str(_LOG_DIR / f"{ts}_crew")
 
         crew = Crew(
             agents=[github_project_summarizer, profiler, resume_strategist, interview_preparer],
