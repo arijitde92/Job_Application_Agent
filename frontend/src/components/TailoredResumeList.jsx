@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { FiEye, FiDownload, FiBookOpen } from 'react-icons/fi';
-import api from '../api/client';
+import api from '../services/api';
 
 export default function TailoredResumeList({ jobs, onPreviewResume }) {
   const navigate = useNavigate();

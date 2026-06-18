@@ -13,7 +13,7 @@ Bucket structure:
 import datetime
 from google.cloud import storage
 
-from backend.config import get_settings
+from app.core.config import get_settings
 
 settings = get_settings()
 

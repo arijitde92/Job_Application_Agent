@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import api from '../api/client';
+import api from '../services/api';
 import Navbar from '../components/Navbar';
 import ResumeUpload from '../components/ResumeUpload';
 import GithubProfileAdd from '../components/GithubProfileAdd';

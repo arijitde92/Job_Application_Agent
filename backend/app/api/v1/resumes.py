@@ -8,12 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.models import User, Resume
-from backend.schemas import ResumeResponse
-from backend.auth import get_current_user
-from backend.gcs import upload_resume, generate_signed_url, download_file, delete_file
-from backend.config import get_settings
+from app.api.deps import get_db
+from app.models import User, Resume
+from app.schemas import ResumeResponse
+from app.api.deps import get_current_user
+from app.services.gcs_service import upload_resume, generate_signed_url, download_file, delete_file
+from app.core.config import get_settings
 
 settings = get_settings()
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import api from '../api/client';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { FiMail, FiLock } from 'react-icons/fi';
 

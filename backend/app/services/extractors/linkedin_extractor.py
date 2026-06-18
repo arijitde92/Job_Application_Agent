@@ -5,7 +5,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from crewai_tools import MCPServerAdapter
-from logger import get_logger
+from app.core.logging import get_logger
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -86,7 +86,7 @@ def extract_linkedin_job_details(url: str, json_output: bool = False):
         JobDetails | str: Extracted job details.
     """
     logger.info(
-        "webpage_extractor.py: Scraping LinkedIn job URL via Bright Data MCP: %s", url
+        "linkedin_extractor: Scraping LinkedIn job URL via Bright Data MCP: %s", url
     )
 
     server_params = _get_mcp_server_params()
@@ -96,7 +96,7 @@ def extract_linkedin_job_details(url: str, json_output: bool = False):
         with MCPServerAdapter(server_params) as mcp_tools:
             tool_names = [t.name for t in mcp_tools]
             logger.info(
-                "webpage_extractor.py: Connected to Bright Data MCP. Available tools: %s",
+                "linkedin_extractor: Connected to Bright Data MCP. Available tools: %s",
                 tool_names,
             )
 
@@ -106,17 +106,17 @@ def extract_linkedin_job_details(url: str, json_output: bool = False):
                 )
 
             scrape_tool = next(t for t in mcp_tools if t.name == "scrape_as_markdown")
-            logger.info("webpage_extractor.py: Calling scrape_as_markdown for: %s", url)
+            logger.info("linkedin_extractor: Calling scrape_as_markdown for: %s", url)
             result = scrape_tool._run(url=url)
             markdown_content = str(result)
             logger.info(
-                "webpage_extractor.py: Scraping complete. Content length: %d chars",
+                "linkedin_extractor: Scraping complete. Content length: %d chars",
                 len(markdown_content),
             )
 
     except Exception as exc:
         logger.error(
-            "webpage_extractor.py: Failed to scrape %s — %s", url, exc, exc_info=True
+            "linkedin_extractor: Failed to scrape %s — %s", url, exc, exc_info=True
         )
         error_model = JobDetails(url=url, job_name=f"ERROR: {exc}")
         return error_model.to_agent_string() if json_output else error_model
@@ -323,7 +323,7 @@ def _parse_markdown_to_job_details(markdown: str, url: str) -> JobDetails:
 
 if __name__ == "__main__":
     test_url = "https://www.linkedin.com/jobs/view/4413867953/"
-    logger.info("webpage_extractor.py: Running standalone extraction for: %s", test_url)
+    logger.info("linkedin_extractor: Running standalone extraction for: %s", test_url)
 
     job: JobDetails = extract_linkedin_job_details(test_url)
 

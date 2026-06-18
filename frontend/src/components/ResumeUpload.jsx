@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import api from '../api/client';
+import api from '../services/api';
 import { FiUploadCloud, FiFile, FiTrash2, FiExternalLink } from 'react-icons/fi';
 
 export default function ResumeUpload({ resumes, onRefresh }) {

@@ -1,20 +1,24 @@
 """
-main.py
--------
-FastAPI application entry point with CORS, lifespan events, and router includes.
+app.main
+--------
+FastAPI application entry point: CORS, lifespan events, and router registration.
 """
 
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.database import engine, Base
-from backend.routers import auth_router, github_router, resume_router, job_router
+from app.core.config import get_settings
+from app.core.database import engine, Base
+from app.api.v1 import auth, github, resumes, jobs
+
+settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create database tables on startup."""
+    """Create database tables on startup and dispose the engine on shutdown."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -31,24 +35,20 @@ app = FastAPI(
 # CORS — allow frontend dev server and production origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",    # Vite dev server
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth_router.router)
-app.include_router(github_router.router)
-app.include_router(resume_router.router)
-app.include_router(job_router.router)
+# ── Routers (versioned under /api) ────────────────────────────────────────────
+app.include_router(auth.router)
+app.include_router(github.router)
+app.include_router(resumes.router)
+app.include_router(jobs.router)
 
 
-@app.get("/api/health")
+@app.get("/api/health", tags=["health"])
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "job-application-agent"}

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import api from '../api/client';
+import api from '../services/api';
 import Navbar from '../components/Navbar';
 import { FiArrowLeft, FiDownload } from 'react-icons/fi';
 

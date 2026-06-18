@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import api from '../api/client';
+import api from '../services/api';
 import { FiLink, FiSend, FiEye } from 'react-icons/fi';
 
 export default function TailorResumeForm({ githubProfiles, resumes, onJobCreated, onPreviewUploadedResume }) {

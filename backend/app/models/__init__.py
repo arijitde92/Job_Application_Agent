@@ -15,7 +15,7 @@ from sqlalchemy import (
     Column, Integer, String, Text, Enum, ForeignKey, DateTime, UniqueConstraint, Index
 )
 from sqlalchemy.orm import relationship
-from backend.database import Base
+from app.core.database import Base
 
 
 class User(Base):

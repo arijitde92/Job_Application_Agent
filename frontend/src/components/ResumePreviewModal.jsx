@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import api from '../api/client';
+import api from '../services/api';
 import { FiX } from 'react-icons/fi';
 
 export default function ResumePreviewModal({ jobId, resumeId, onClose }) {

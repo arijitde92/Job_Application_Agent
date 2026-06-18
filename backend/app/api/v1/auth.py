@@ -8,13 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.models import User
-from backend.schemas import (
+from app.api.deps import get_db
+from app.models import User
+from app.schemas import (
     RegisterRequest, LoginRequest, GoogleOAuthRequest,
     TokenResponse, UserResponse,
 )
-from backend.auth import (
+from app.core.security import (
     hash_password, verify_password, create_access_token,
     get_current_user, verify_google_id_token,
 )

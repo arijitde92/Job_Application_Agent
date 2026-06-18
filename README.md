@@ -6,6 +6,101 @@ This project also includes a **Full-Stack Web App version** with a **FastAPI bac
 
 ---
 
+## 📦 Project Structure
+
+```
+Job_Application_Agent/
+├── backend/                # FastAPI backend + CrewAI pipeline (uv-managed)
+│   ├── app/
+│   │   ├── api/            # Route handlers (api/v1) + shared deps
+│   │   ├── core/           # config, security, database, logging
+│   │   ├── services/       # GCS, crew runner, CrewAI pipeline, extractors
+│   │   ├── models/         # SQLAlchemy ORM models
+│   │   ├── schemas/        # Pydantic schemas
+│   │   └── main.py         # App init + CORS + routers
+│   ├── credentials/        # GCP keys (gitignored)
+│   ├── pyproject.toml      # Dependencies (uv)
+│   ├── Dockerfile          # (empty for now)
+│   └── README.md           # Backend setup & run instructions
+├── frontend/               # React + Vite (JavaScript) frontend
+│   ├── src/
+│   │   ├── components/ pages/ context/ hooks/ services/ assets/
+│   │   └── main.jsx App.jsx
+│   ├── Dockerfile          # (empty for now)
+│   └── package.json
+├── .github/workflows/      # CI/CD (deploy.yml — empty for now)
+├── docker-compose.yml      # (empty for now)
+└── README.md               # This file
+```
+
+## ✅ Prerequisites
+
+| Requirement | Version / Notes |
+| ----------- | --------------- |
+| **Python** | 3.11+ (3.12 recommended). You don't need to install it manually — `uv` will fetch a matching interpreter. |
+| **[uv](https://docs.astral.sh/uv/)** | The Python package & project manager used here. Install: `curl -LsSf https://astral.sh/uv/install.sh \| sh` (then restart your shell so `~/.local/bin` is on `PATH`). |
+| **Node.js** | 18+ (with `npm`), for the React frontend. [Download](https://nodejs.org/en/download). |
+| **Google Cloud account** | A GCP project with **BigQuery**, **Vertex AI**, **Cloud SQL Admin**, and **Cloud Storage** APIs enabled, plus a **service-account JSON key**. See [backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md). |
+| **Cloud SQL (MySQL)** | A Cloud SQL MySQL instance (the web app stores users/jobs there). |
+| **[Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/mysql/sql-proxy)** | `cloud-sql-proxy` binary on `PATH` (the `uv run db-proxy` / `uv run dev` commands invoke it). See [Installation](https://docs.cloud.google.com/sql/docs/mysql/connect-instance-auth-proxy) to install|
+| **API keys** | GitHub PAT, Bright Data, Gemini, and (optionally) Serper. See [API Keys & Cloud Setup](#-api-keys--cloud-setup). |
+
+> **All `uv run` commands are run from the `backend/` directory** — the project
+> and its custom commands are defined in `backend/pyproject.toml`. There is no
+> root-level `pyproject.toml`, so `uv run dev` from the repo root will not work.
+
+---
+
+## ⚡ Quick Start
+
+```bash
+git clone https://github.com/arijitde92/Job_Application_Agent.git
+cd Job_Application_Agent
+```
+
+### 1. Backend (uv)
+
+```bash
+cd backend
+cp .env.example .env          # then fill in secrets (see below)
+uv sync                       # creates backend/.venv and installs everything
+```
+
+Place your GCP service-account JSON key under `backend/credentials/` and point
+`GOOGLE_APPLICATION_CREDENTIALS` in `backend/.env` at it (an absolute path is
+safest).
+
+### 2. Frontend
+
+```bash
+cd ../frontend
+cp .env.example .env
+npm install
+```
+
+### 3. Run everything (from `backend/`)
+
+```bash
+cd ../backend
+uv run dev                    # Cloud SQL proxy + API + frontend, together
+```
+
+Then open **http://localhost:5173**. The API is at http://localhost:8000
+(docs at http://localhost:8000/docs).
+
+Prefer separate terminals? Run them individually:
+
+```bash
+uv run db-proxy   # Cloud SQL Auth Proxy → 127.0.0.1:3306
+uv run api        # FastAPI dev server  → http://localhost:8000
+uv run frontend   # Vite dev server     → http://localhost:5173
+```
+
+See **[backend/README.md](backend/README.md)** for the full command list,
+env-var overrides, and the standalone crew CLI.
+
+---
+
 ## 🚀 Features
 
 - **Multi-Agent Orchestration:** Uses Crew AI to coordinate agents for research, profiling, resume tailoring, and interview preparation.
@@ -22,7 +117,6 @@ This project also includes a **Full-Stack Web App version** with a **FastAPI bac
 
 - **Crew AI** ([Homepage](https://www.crewai.com/)): The backbone of the system, enabling modular, collaborative agent workflows.
 - **Agents:**
-  - **Researcher:** Extracts and analyzes job requirements from LinkedIn.
   - **GitHub Project Summarizer:** Summarizes your most relevant GitHub projects.
   - **Profiler:** Compiles a comprehensive personal/professional profile.
   - **Resume Strategist:** Tailors your resume for each job.
@@ -45,184 +139,101 @@ This project also includes a **Full-Stack Web App version** with a **FastAPI bac
 
 ## 🏗️ Architecture
 
-- **Python** (see `requirements.txt` for dependencies)
+- **Python 3.11+** with **[uv](https://docs.astral.sh/uv/)** for dependency &
+  environment management (see `backend/pyproject.toml`)
+- **FastAPI** backend (async SQLAlchemy + Cloud SQL MySQL, JWT/Google OAuth auth)
+- **React + Vite** frontend with live progress via Server-Sent Events (SSE)
 - **Crew AI** for agent orchestration
 - **Google BigQuery** as a vector store for document embeddings
 - **Vertex AI** for generating and querying semantic embeddings
-- **BeautifulSoup, Requests** for web scraping
-- **LangChain** for document loading and chunking
+- **Google Cloud Storage** for resume & generated-output storage
+- **Bright Data MCP** for LinkedIn job scraping; **LangChain** for document
+  loading and chunking
 
 ---
 
-## ⚙️ Setup Instructions
+## ⚙️ Configuration
 
-### 1. Clone the Repository
-
-This is always the first step. Run:
-
-```bash
-git clone https://github.com/arijitde92/Job_Application_Agent.git
-cd Job_Application_Agent
-```
-
----
-
-### Option A: Running the Standalone CLI Agent
-
-#### 1. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-#### 2. Configure Environment Variables
-
-Create a `.env` file in the project root with the following variables:
+All backend configuration lives in **`backend/.env`** (copy it from
+`backend/.env.example`). Key groups:
 
 ```env
-# GitHub API token
-GITHUB_PERSONAL_ACCESS_TOKEN=your_github_token
-
-# Google Cloud Project details
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/gcp-service-account.json
-GCP_PROJECT_ID=inbound-byway-457408-c9
-GCP_DATASET_NAME=job_applier_app
+# ── GCP ──────────────────────────────────────────────────────────
+GOOGLE_APPLICATION_CREDENTIALS=/abs/path/to/backend/credentials/service-account.json
+GCP_PROJECT_ID=your-project-id
 GCP_LOCATION=asia-south2
+GCP_DATASET_NAME=job_applier_app
 GCP_TABLE_NAME=github_repo_data
 
-# (Optional) Vertex AI Model
-VERTEX_AI_MODEL=text-embedding-005
+# ── API keys ─────────────────────────────────────────────────────
+GITHUB_PERSONAL_ACCESS_TOKEN=...
+BRIGHT_DATA_API_KEY=...          # LinkedIn scraping (Bright Data MCP)
+GEMINI_API_KEY=...               # Crew LLM + Vertex embeddings
+SERPER_API_KEY=...               # optional web search
+
+# ── Cloud SQL (MySQL) ────────────────────────────────────────────
+MYSQL_HOST=127.0.0.1             # 127.0.0.1 when using the Cloud SQL Auth Proxy
+MYSQL_PORT=3306
+MYSQL_USER=...
+MYSQL_PASSWORD=...
+MYSQL_DATABASE=job_applier
+
+# ── GCS / Auth ───────────────────────────────────────────────────
+GCS_BUCKET_NAME=your-resumes-bucket
+JWT_SECRET_KEY=                  # generate: python -c "import secrets; print(secrets.token_urlsafe(32))"
+GOOGLE_OAUTH_CLIENT_ID=          # optional, for "Sign in with Google"
+GOOGLE_OAUTH_CLIENT_SECRET=
 ```
 
-#### 3. Run the CLI Application
+The frontend has its own `frontend/.env` (copy from `frontend/.env.example`) for
+`VITE_*` variables.
 
-```bash
-python Job_Applier.py
-```
+> **Never commit `.env` or service-account keys.** They are gitignored. The
+> `db-proxy` connection name is derived from `GCP_PROJECT_ID`, `GCP_LOCATION`,
+> and instance `job-applier-mysql` by default — override with `CLOUD_SQL_INSTANCE`
+> if yours differs.
+
+For step-by-step GCP provisioning (project, BigQuery dataset, Cloud SQL instance,
+GCS bucket, service account), see **[backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md)**.
 
 ---
 
-### Option B: Running the Full-Stack Web App
+## 🖥️ Standalone Crew CLI (no web app)
 
-#### 1. Setup Python Environment & Dependencies
-
-Create and activate a conda environment, then install the backend dependencies:
+You can run the agent pipeline directly, without the frontend/DB, from `backend/`:
 
 ```bash
-conda create -n job_agent python=3.12 -y
-conda activate job_agent
-pip install -r requirements.txt
-pip install -r backend/requirements.txt
+cd backend
+uv run crew \
+    --url https://www.linkedin.com/jobs/view/<id>/ \
+    --github https://github.com/<user> \
+    --resume sample_data/Arijit_De_Resume.md \
+    --name "Your Name"
 ```
 
-#### 2. Install Node.js
-
-The frontend React application requires Node.js (v18+). If you do not have it installed, please download and install it from the official [Node.js Download Page](https://nodejs.org/en/download).
-
-#### 3. Setup Frontend Dependencies
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-#### 4. Configure Web App Environment Variables
-
-Add the following database and storage configurations to the bottom of your `.env` file:
-
-```env
-# Cloud SQL MySQL Connection
-# Use 127.0.0.1 when running Cloud SQL Auth Proxy (Recommended)
-# Use 34.131.150.209 for direct connection (requires authorizing your public IP in GCP console)
-MYSQL_HOST=127.0.0.1
-MYSQL_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=JobAgent@2026
-MYSQL_DATABASE=job_applier
-
-# Google Cloud Storage (GCS) for Resumes
-GCS_BUCKET_NAME=job-applier-project-69718baa-b6cc-44ec-9fb-resumes
-
-# JWT Authentication
-# Generate using: python -c "import secrets; print(secrets.token_urlsafe(32))"
-JWT_SECRET_KEY=drUVPzflrCADfaC7HjrydJYPPS_IpspPlXxjOELdfjI
-JWT_ALGORITHM=HS256
-JWT_EXPIRY_MINUTES=1440
-
-# Google OAuth (Optional — for Google Login)
-GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
-```
-
-#### 5. Setup & Run Cloud SQL Auth Proxy (Recommended)
-
-Since dynamic public IP addresses change frequently, running the Cloud SQL Auth Proxy is the recommended way to securely connect to the Cloud SQL database from your local development environment without having to configure authorized IP networks in the GCP Console.
-
-##### A. Install the Proxy Client (Linux)
-```bash
-# Download the binary (for 64-bit Linux)
-curl -o cloud-sql-proxy https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.0/cloud-sql-proxy.linux.amd64
-
-# Make it executable
-chmod +x cloud-sql-proxy
-
-# Move it to a directory in your PATH (optional, but recommended)
-sudo mv cloud-sql-proxy /usr/local/bin/
-```
-
-##### B. Run the Proxy
-Start the proxy in a separate terminal using your GCP Service Account JSON key:
-
-```bash
-cloud-sql-proxy \
-  --credentials-file ./project-69718baa-b6cc-44ec-9fb-17c2c8f0dd9c.json \
-  project-69718baa-b6cc-44ec-9fb:asia-south2:job-applier-mysql
-```
-
-*Note: If port `3306` is already in use by a local MySQL server on your machine, run the proxy on port `3307` using the `--port 3307` flag and update `MYSQL_PORT=3307` in your `.env` file.*
-
-#### 6. Run the Web Application
-
-Start the backend API server and frontend development server in separate terminals (ensure the Cloud SQL Auth Proxy is running if `MYSQL_HOST` is set to `127.0.0.1`):
-
-**Terminal 1 (Backend API):**
-
-```bash
-conda activate job_agent
-uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-**Terminal 2 (Frontend React):**
-
-```bash
-cd frontend
-npm run dev
-```
-
-Open `http://localhost:5173` in your browser.
+This extracts the job, indexes the GitHub repos into BigQuery, tailors the
+resume, and writes interview materials — same pipeline the web app drives.
 
 ---
 
 ## 🔑 API Keys & Cloud Setup
 
-- **GitHub:** [Create a Personal Access Token](https://github.com/settings/tokens) and set `GITHUB_PERSONAL_ACCESS_TOKEN` in your `.env` file.
-- **Google Cloud:**  
-  - Enable BigQuery and Vertex AI APIs.
-  - Create a service account with the necessary permissions.
-  - Download the JSON key and set `GOOGLE_APPLICATION_CREDENTIALS` in your `.env` file.
-- **OpenAI:**  
-  - [Get an OpenAI API Key](https://platform.openai.com/account/api-keys)
-  - Add `OPENAI_API_KEY=your_openai_api_key` to your `.env` file.
-- **Serper:**  
-  - [Get a Serper API Key](https://serper.dev/)
-  - Add `SERPER_API_KEY=your_serper_api_key` to your `.env` file.
+All keys go in `backend/.env`.
+
+- **GitHub:** [Create a Personal Access Token](https://github.com/settings/tokens) → `GITHUB_PERSONAL_ACCESS_TOKEN`.
+- **Google Cloud:**
+  - Enable **BigQuery**, **Vertex AI**, **Cloud SQL Admin**, and **Cloud Storage** APIs.
+  - Create a service account with the relevant roles (BigQuery, Vertex AI User, Cloud SQL Client, Storage Object Admin).
+  - Download the JSON key into `backend/credentials/` and point `GOOGLE_APPLICATION_CREDENTIALS` at it.
+- **Gemini:** [Get a Gemini API key](https://aistudio.google.com/app/apikey) → `GEMINI_API_KEY` (the crew's LLM + embeddings).
+- **Bright Data:** [Get an API key](https://brightdata.com/) for the MCP scraper → `BRIGHT_DATA_API_KEY` (LinkedIn job extraction).
+- **Serper (optional):** [Get a Serper API key](https://serper.dev/) → `SERPER_API_KEY` (web search tool).
 
 ---
 
 ## 📚 How it Works
 
-1. **Job Research:** The Researcher agent scrapes LinkedIn for job details.
+1. **Job Extraction:** The job posting is scraped once via the Bright Data MCP LinkedIn extractor and parsed into structured `JobDetails`, which are injected into every downstream task.
 2. **GitHub Analysis:** The GitHub Project Summarizer indexes and summarizes your public repos, storing embeddings in BigQuery using Vertex AI.
 3. **Profile Compilation:** The Profiler agent creates a comprehensive profile using your resume, GitHub summaries, and job requirements.
 4. **Resume Tailoring:** The Resume Strategist aligns your resume with the job description.

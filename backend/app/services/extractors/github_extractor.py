@@ -10,7 +10,7 @@ import pandas as pd
 import openpyxl
 import os  # Added for directory and file operations
 from dotenv import load_dotenv
-from logger import get_logger
+from app.core.logging import get_logger
 logger = get_logger(__name__)
 # MIME types considered non-textual
 BINARY_MIME_PREFIXES = [
@@ -181,12 +181,12 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
         # Check if data exists
         for row in results:
             if row.count > 0:
-                logger.info("github_repo_extractor.py: Data for %s/%s already exists in BigQuery. Skipping processing.", owner, repo)
+                logger.info("github_extractor: Data for %s/%s already exists in BigQuery. Skipping processing.", owner, repo)
                 return
     except Exception as e:
-        logger.error("github_repo_extractor.py: Error while querying BigQuery Table with query: %s. Error: %s", query, e)
+        logger.error("github_extractor: Error while querying BigQuery Table with query: %s. Error: %s", query, e)
     
-    logger.info("github_repo_extractor.py: No existing data found for %s/%s. Proceeding with processing.", owner, repo)
+    logger.info("github_extractor: No existing data found for %s/%s. Proceeding with processing.", owner, repo)
     # 1. Load files from GitHub
     loader = GithubFileLoader(
         repo=f"{owner}/{repo}",
@@ -197,7 +197,7 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
     )
     documents = loader.load()
     if not documents:
-        logger.warning("github_repo_extractor.py: No documents loaded from %s", repo_url)
+        logger.warning("github_extractor: No documents loaded from %s", repo_url)
         return
 
     # Add repo_username and repo_name as metadata to each document
@@ -214,7 +214,7 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
         separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""],
     )
     doc_splits = text_splitter.split_documents(documents)
-    logger.info("github_repo_extractor.py: Loaded and split %d document chunks from %s", len(doc_splits), repo_url)
+    logger.info("github_extractor: Loaded and split %d document chunks from %s", len(doc_splits), repo_url)
 
     # 3. Create Vertex AI Embeddings using the new genai package
     embedding_model = GoogleGenerativeAIEmbeddings(
@@ -241,11 +241,11 @@ def process_github_repo_to_bq(repo_url, branch="main", file_filter=None, access_
             ids = bq_store.add_documents(batch)
             if ids:
                 doc_ids.extend(ids)
-            logger.info("github_repo_extractor.py: Added batch of %d documents.", len(batch))
+            logger.info("github_extractor: Added batch of %d documents.", len(batch))
         except Exception as e:
-            logger.error("github_repo_extractor.py: Error adding batch to BigQuery: %s", e)
+            logger.error("github_extractor: Error adding batch to BigQuery: %s", e)
             
-    logger.info("github_repo_extractor.py: Added %d documents to BigQuery vector store.", len(doc_ids))
+    logger.info("github_extractor: Added %d documents to BigQuery vector store.", len(doc_ids))
 
 def query_github_vector_store(query, top_k=5, dataset_name=None):
     """
@@ -289,8 +289,8 @@ if __name__ == "__main__":
     # Example query
     query = "How do I run the chatbot locally?"
     results = query_github_vector_store(query)
-    logger.info("github_repo_extractor.py: Top relevant chunks:")
+    logger.info("github_extractor: Top relevant chunks:")
     for i, (content, metadata) in enumerate(results, 1):
-        logger.info("github_repo_extractor.py: Result %d:", i)
-        logger.info("github_repo_extractor.py: Metadata: %s", metadata)
-        logger.info("github_repo_extractor.py: Content: %s%s", content[:500], "..." if len(content) > 500 else "")
+        logger.info("github_extractor: Result %d:", i)
+        logger.info("github_extractor: Metadata: %s", metadata)
+        logger.info("github_extractor: Content: %s%s", content[:500], "..." if len(content) > 500 else "")

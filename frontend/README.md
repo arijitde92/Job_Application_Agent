@@ -1,16 +1,47 @@
-# React + Vite
+# Job Application Agent — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite (JavaScript) single-page app. Authenticates against the FastAPI
+backend, lets users link a GitHub profile and upload a resume, kicks off the
+CrewAI tailoring pipeline, and streams live progress via Server-Sent Events.
 
-Currently, two official plugins are available:
+## Layout
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```
+frontend/
+├── src/
+│   ├── assets/        # Static media (images, icons)
+│   ├── components/    # Reusable UI components
+│   ├── pages/         # Route-level views
+│   ├── context/       # React context providers (AuthContext)
+│   ├── hooks/         # Custom React hooks
+│   ├── services/      # API client (api.js — axios instance + interceptors)
+│   ├── App.jsx        # Route layout
+│   └── main.jsx       # Entry point
+├── public/
+├── .env.example
+├── package.json
+└── vite.config.js     # Dev server proxies /api → http://localhost:8000
+```
 
-## React Compiler
+## Setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+cp .env.example .env
+npm install
+```
 
-## Expanding the ESLint configuration
+## Develop
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run dev        # http://localhost:5173
+```
+
+The dev server proxies `/api/*` to the backend at `http://localhost:8000`
+(see `vite.config.js`), so run the backend alongside it.
+
+## Build
+
+```bash
+npm run build      # outputs to dist/
+npm run preview
+```

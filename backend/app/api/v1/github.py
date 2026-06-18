@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.models import User, GithubProfile
-from backend.schemas import GithubProfileCreate, GithubProfileResponse
-from backend.auth import get_current_user
+from app.api.deps import get_db
+from app.models import User, GithubProfile
+from app.schemas import GithubProfileCreate, GithubProfileResponse
+from app.api.deps import get_current_user
 
 router = APIRouter(prefix="/api/github", tags=["github"])
 

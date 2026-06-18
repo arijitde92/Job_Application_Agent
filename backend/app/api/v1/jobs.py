@@ -11,12 +11,12 @@ from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.models import User, Job, GithubProfile, Resume
-from backend.schemas import TailorJobRequest, JobResponse, JobDetailResponse
-from backend.auth import get_current_user
-from backend.gcs import download_file
-from backend.crew_runner import run_crew_for_job, progress_store
+from app.api.deps import get_db
+from app.models import User, Job, GithubProfile, Resume
+from app.schemas import TailorJobRequest, JobResponse, JobDetailResponse
+from app.api.deps import get_current_user
+from app.services.gcs_service import download_file
+from app.services.crew_runner import run_crew_for_job, progress_store
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 

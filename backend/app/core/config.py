@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     # ── Resume Upload ─────────────────────────────────────────────────────
     MAX_RESUME_SIZE_MB: int = Field(default=10, description="Max resume upload size in MB")
 
+    # ── CORS ──────────────────────────────────────────────────────────────
+    CORS_ORIGINS: str = Field(
+        default="http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173",
+        description="Comma-separated list of allowed CORS origins",
+    )
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parse CORS_ORIGINS into a list of origin strings."""
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
     @property
     def mysql_url(self) -> str:
         """Construct the async MySQL connection URL for SQLAlchemy."""

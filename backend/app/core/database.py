@@ -8,7 +8,7 @@ Uses asyncmy driver for Cloud SQL MySQL connectivity.
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-from backend.config import get_settings
+from app.core.config import get_settings
 
 # ── Monkeypatch SQLAlchemy asyncmy ping issue ──────────────────────────────
 # In PyMySQL 1.2.0+, ping() defaults reconnect to False.

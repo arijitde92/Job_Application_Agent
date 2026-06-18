@@ -1,10 +1,10 @@
 """
-logger.py
----------
+app.core.logging
+----------------
 Centralized logging configuration for the Job Application Agent.
 
 Usage:
-    from logger import get_logger
+    from app.core.logging import get_logger
     logger = get_logger(__name__)
     logger.info("Something happened")
 
@@ -28,7 +28,8 @@ import datetime
 from pathlib import Path
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-LOG_DIR = Path(__file__).parent / "logs"
+# app/core/logging.py → parents[2] resolves to the `backend/` directory.
+LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 LOG_FILE = LOG_DIR / f"job_agent_{timestamp}.log"
 LOG_LEVEL_ENV = os.environ.get("LOG_LEVEL", "INFO").upper()  # Override via .env

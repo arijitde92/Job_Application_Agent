@@ -13,9 +13,9 @@ from bs4 import BeautifulSoup
 import json
 import os
 from dotenv import load_dotenv
-from github_repo_extractor import process_github_repo_to_bq, query_github_vector_store
-from webpage_extractor import extract_linkedin_job_details, JobDetails
-from logger import get_logger
+from app.services.extractors.github_extractor import process_github_repo_to_bq, query_github_vector_store
+from app.services.extractors.linkedin_extractor import extract_linkedin_job_details, JobDetails
+from app.core.logging import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
@@ -63,10 +63,10 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
         user_name = user_url.split('/')[-1].split('?')[0]
 
         # Fetch the url of each repository
-        logger.info("agents.py: Searching URL: %s", user_url)
+        logger.info("crew.agents: Searching URL: %s", user_url)
         response = requests.get(user_url, headers={'User-Agent': "Chrome/51.0.2704.106"})
         if response.status_code != 200:
-            logger.error("agents.py: Error Occurred: Response Code: %s", response.status_code)
+            logger.error("crew.agents: Error Occurred: Response Code: %s", response.status_code)
             return github_repo_urls
         html_content = response.content
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -74,7 +74,7 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
         for repo_heading in repo_headings:
             repo_name = repo_heading.a.attrs["href"].split('/')[-1]
             link = 'https://github.com/' + user_name + "/" + repo_name
-            logger.info("agents.py: Found repo: %s", link)
+            logger.info("crew.agents: Found repo: %s", link)
             github_repo_urls.append(link)
         pages = soup.find_all(attrs={"class": "next_page"})
         if len(pages) > 0:
@@ -86,11 +86,11 @@ def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
     
     # Call the function to get repository links
     github_repo_urls = get_repository_links(user_url, [])
-    logger.info("agents.py: Found %d repositories from %s", len(github_repo_urls), user_url)
+    logger.info("crew.agents: Found %d repositories from %s", len(github_repo_urls), user_url)
     if not github_repo_urls:
-        logger.warning("agents.py: No repositories found or an error occurred.")
+        logger.warning("crew.agents: No repositories found or an error occurred.")
         return None
-    logger.info("agents.py: Found %d repositories for user %s", len(github_repo_urls), user_url)
+    logger.info("crew.agents: Found %d repositories for user %s", len(github_repo_urls), user_url)
     for repo_url in github_repo_urls[:GITHUB_REPO_SEARCH_LIMIT]:
         process_github_repo_to_bq(repo_url,
                                   file_filter=lambda file_path: file_path.endswith(('.py', '.ipynb', '.md', '.txt')),
@@ -115,10 +115,10 @@ def extract_linkedin_job_details_tool(url: str) -> str:
         str: A JSON-formatted string containing the extracted job details.
              Returns an error message JSON if scraping fails.
     """
-    logger.info("agents.py: extract_linkedin_job_details_tool called for URL: %s", url)
+    logger.info("crew.agents: extract_linkedin_job_details_tool called for URL: %s", url)
     job: JobDetails = extract_linkedin_job_details(url)
     logger.info(
-        "agents.py: Extracted job '%s' at '%s'",
+        "crew.agents: Extracted job '%s' at '%s'",
         job.job_name, job.company_name
     )
     return job.to_agent_string()
@@ -226,7 +226,7 @@ interview_preparer = Agent(
 )
 
 if __name__ == "__main__":
-    logger.info("agents.py: Testing agents.py")
+    logger.info("crew.agents: Testing agents.py")
     # print("Testing LinkedIn Job Details Extraction Tool")
     # job_posting_url = "https://www.linkedin.com/jobs/view/4234610887/"
     # job_details = extract_linkedin_job_details_tool.run(url=job_posting_url)

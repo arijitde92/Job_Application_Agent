@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import api from '../api/client';
+import api from '../services/api';
 import { FiGithub, FiTrash2, FiPlus } from 'react-icons/fi';
 
 export default function GithubProfileAdd({ profiles, onRefresh }) {

@@ -1,5 +1,5 @@
 from crewai import Task
-from agents import (
+from app.services.crew.agents import (
     github_project_summarizer,
     profiler,
     resume_strategist,

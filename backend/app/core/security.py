@@ -29,9 +29,9 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import get_settings
-from backend.database import get_db
-from backend.models import User
+from app.core.config import get_settings
+from app.core.database import get_db
+from app.models import User
 
 settings = get_settings()
 

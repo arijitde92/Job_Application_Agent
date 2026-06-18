@@ -1,8 +1,8 @@
 """
-crew_runner.py
---------------
+app.services.crew_runner
+------------------------
 Async wrapper for CrewAI crew execution with progress tracking via SSE.
-Runs the existing agent pipeline in a thread pool to avoid blocking the async event loop.
+Runs the agent pipeline in a thread pool to avoid blocking the async event loop.
 """
 
 import asyncio
@@ -17,10 +17,10 @@ from typing import Dict, Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.config import get_settings
-from backend.database import AsyncSessionLocal
-from backend.gcs import download_file, upload_tailored_resume, upload_interview_materials
-from logger import get_logger
+from app.core.config import get_settings
+from app.core.database import AsyncSessionLocal
+from app.services.gcs_service import download_file, upload_tailored_resume, upload_interview_materials
+from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -32,13 +32,14 @@ _executor = ThreadPoolExecutor(max_workers=4)
 progress_store: Dict[int, Dict[str, Any]] = {}
 
 # ── Crew verbose log path ─────────────────────────────────────────────────────
-_LOG_DIR = Path(__file__).parent.parent / "logs"
+# app/services/crew_runner.py → parents[2] resolves to the `backend/` directory.
+_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 
 
 def _update_progress(job_id: int, step: str, error: str = None):
     """Update the in-memory progress store for SSE broadcasting."""
     progress_store[job_id] = {"current_step": step, "error": error}
-    logger.info("crew_runner.py: Job %d → step: %s", job_id, step)
+    logger.info("crew_runner: Job %d → step: %s", job_id, step)
 
 
 def _run_crew_sync(
@@ -56,13 +57,13 @@ def _run_crew_sync(
     # Step 1: Extract job details
     _update_progress(job_id, "extracting_job_info")
     try:
-        from webpage_extractor import extract_linkedin_job_details
+        from app.services.extractors.linkedin_extractor import extract_linkedin_job_details
         job_details = extract_linkedin_job_details(job_url)
         job_info = job_details.to_dict()
         job_info.pop("about_company", None)
         job_details_json = json.dumps(job_info, indent=2)
     except Exception as e:
-        logger.error("crew_runner.py: Failed to extract job details for job %d: %s", job_id, e)
+        logger.error("crew_runner: Failed to extract job details for job %d: %s", job_id, e)
         raise RuntimeError(f"Failed to extract job details: {e}")
 
 
@@ -76,12 +77,9 @@ def _run_crew_sync(
         # Step 3: Build crew and run
         _update_progress(job_id, "building_profile")
 
-        from crewai import Crew
-        from agents import (
-            github_project_summarizer, profiler, resume_strategist, interview_preparer,
-        )
-        from tasks import (
-            github_summary_task, profile_task, resume_strategy_task, interview_preparation_task,
+        from app.services.crew.crew import build_crew
+        from app.services.crew.tasks import (
+            resume_strategy_task, interview_preparation_task,
         )
 
         applicant_name = user_email.split("@")[0].replace(".", "_")
@@ -98,13 +96,8 @@ def _run_crew_sync(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         crew_log_path = str(_LOG_DIR / f"{ts}_crew")
 
-        crew = Crew(
-            agents=[github_project_summarizer, profiler, resume_strategist, interview_preparer],
-            tasks=[github_summary_task, profile_task, resume_strategy_task, interview_preparation_task],
-            verbose=True,
-            output_log_file=crew_log_path,
-        )
-        logger.info("crew_runner.py: Crew verbose log → %s", crew_log_path)
+        crew = build_crew(output_log_file=crew_log_path, verbose=True, tracing=False)
+        logger.info("crew_runner: Crew verbose log → %s", crew_log_path)
 
         _update_progress(job_id, "tailoring_resume")
 
@@ -120,7 +113,7 @@ def _run_crew_sync(
         }
 
         result = crew.kickoff(inputs=job_application_inputs)
-        logger.info("crew_runner.py: Crew execution completed for job %d. Log saved to %s", job_id, crew_log_path)
+        logger.info("crew_runner: Crew execution completed for job %d. Log saved to %s", job_id, crew_log_path)
 
         # Read output files
         tailored_resume_content = ""
@@ -167,7 +160,7 @@ async def run_crew_for_job(
 
         # Update status to processing
         async with AsyncSessionLocal() as db:
-            from backend.models import Job
+            from app.models import Job
             await db.execute(
                 update(Job).where(Job.id == job_id).values(status="processing")
             )
@@ -185,7 +178,7 @@ async def run_crew_for_job(
         # Save extracted job details to DB on the correct async event loop
         job_details = result["job_details"]
         async with AsyncSessionLocal() as db:
-            from backend.models import Job
+            from app.models import Job
             await db.execute(
                 update(Job).where(Job.id == job_id).values(
                     job_name=job_details.job_name,
@@ -200,7 +193,7 @@ async def run_crew_for_job(
                 )
             )
             await db.commit()
-        logger.info("crew_runner.py: Job details saved for job %d", job_id)
+        logger.info("crew_runner: Job details saved for job %d", job_id)
 
         # Upload results to GCS
         _update_progress(job_id, "uploading_results")
@@ -219,7 +212,7 @@ async def run_crew_for_job(
 
         # Update job record
         async with AsyncSessionLocal() as db:
-            from backend.models import Job
+            from app.models import Job
             await db.execute(
                 update(Job).where(Job.id == job_id).values(
                     status="completed",
@@ -231,16 +224,16 @@ async def run_crew_for_job(
             await db.commit()
 
         _update_progress(job_id, "completed")
-        logger.info("crew_runner.py: Job %d completed successfully", job_id)
+        logger.info("crew_runner: Job %d completed successfully", job_id)
 
     except Exception as e:
-        logger.error("crew_runner.py: Job %d failed: %s", job_id, e, exc_info=True)
+        logger.error("crew_runner: Job %d failed: %s", job_id, e, exc_info=True)
         _update_progress(job_id, "failed", error=str(e))
 
         # Update job status to failed
         try:
             async with AsyncSessionLocal() as db:
-                from backend.models import Job
+                from app.models import Job
                 await db.execute(
                     update(Job).where(Job.id == job_id).values(
                         status="failed", error_message=str(e)[:2000],
@@ -248,4 +241,4 @@ async def run_crew_for_job(
                 )
                 await db.commit()
         except Exception as db_err:
-            logger.error("crew_runner.py: Failed to update job %d status: %s", job_id, db_err)
+            logger.error("crew_runner: Failed to update job %d status: %s", job_id, db_err)

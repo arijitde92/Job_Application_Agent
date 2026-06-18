@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { FiEye, FiDownload, FiBookOpen, FiX } from 'react-icons/fi';
-import api from '../api/client';
+import api from '../services/api';
 
 export default function ResumeReadyModal({ job, onClose, onPreviewResume }) {
   const navigate = useNavigate();
