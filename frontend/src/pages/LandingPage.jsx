@@ -90,7 +90,10 @@ export default function LandingPage() {
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-8)' }}>
             {STEPS.map((s, i) => (
-              <div key={i} style={{ textAlign: 'center', position: 'relative' }}>
+              <div key={i} style={{ textAlign: 'center' }}>
+                <span style={{ display: 'block', marginBottom: 'var(--space-2)', fontSize: 'var(--font-size-xs)', color: 'var(--accent-primary)', fontWeight: 700, letterSpacing: '0.05em' }}>
+                  STEP {s.num}
+                </span>
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   width: 64, height: 64, borderRadius: '50%',
@@ -99,9 +102,6 @@ export default function LandingPage() {
                   color: 'white',
                 }}>
                   {s.icon}
-                </span>
-                <span style={{ position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)', fontSize: 'var(--font-size-xs)', color: 'var(--accent-primary)', fontWeight: 700 }}>
-                  STEP {s.num}
                 </span>
                 <h3 style={{ fontSize: 'var(--font-size-xl)', marginBottom: 'var(--space-2)' }}>{s.title}</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)' }}>{s.desc}</p>

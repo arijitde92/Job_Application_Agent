@@ -44,15 +44,21 @@ def _update_progress(job_id: int, step: str, error: str = None):
 
 def _run_crew_sync(
     job_id: int, user_id: int, user_email: str,
-    github_username: str, github_url: str, bq_dataset_name: str,
-    resume_content: str, job_url: str,
+    github_username: str = None, github_url: str = None, bq_dataset_name: str = None,
+    resume_content: str = None, job_url: str = None,
 ):
     """
     Synchronous crew execution — runs in a thread.
     This imports and uses the existing crew pipeline.
+
+    When no GitHub URL is supplied the crew is built without the GitHub
+    summarizer agent/task and tailors the resume from the resume + job
+    details alone.
     """
     from dotenv import load_dotenv
     load_dotenv()
+
+    include_github = bool(github_url)
 
     # Step 1: Extract job details
     _update_progress(job_id, "extracting_job_info")
@@ -68,7 +74,9 @@ def _run_crew_sync(
 
 
     # Step 2: Write resume to temp file for crew to read
-    _update_progress(job_id, "searching_projects")
+    # The "searching_projects" step only applies when GitHub repos are indexed;
+    # without GitHub we advance straight to building the profile.
+    _update_progress(job_id, "searching_projects" if include_github else "building_profile")
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, prefix="resume_") as f:
         f.write(resume_content)
         resume_path = f.name
@@ -78,9 +86,6 @@ def _run_crew_sync(
         _update_progress(job_id, "building_profile")
 
         from app.services.crew.crew import build_crew
-        from app.services.crew.tasks import (
-            resume_strategy_task, interview_preparation_task,
-        )
 
         applicant_name = user_email.split("@")[0].replace(".", "_")
 
@@ -88,16 +93,20 @@ def _run_crew_sync(
         resume_output = tempfile.mktemp(suffix="_resume.md", prefix=f"job{job_id}_")
         interview_output = tempfile.mktemp(suffix="_interview.md", prefix=f"job{job_id}_")
 
-        # Override output_file dynamically
-        resume_strategy_task.output_file = resume_output
-        interview_preparation_task.output_file = interview_output
-
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         crew_log_path = str(_LOG_DIR / f"{ts}_crew")
 
-        crew = build_crew(output_log_file=crew_log_path, verbose=True, tracing=False)
+        crew = build_crew(
+            output_log_file=crew_log_path, verbose=True, tracing=False,
+            include_github=include_github,
+        )
         logger.info("crew_runner: Crew verbose log → %s", crew_log_path)
+
+        # Stamp per-request output paths on this run's fresh task objects.
+        # build_tasks() guarantees interview is last and resume second-to-last.
+        crew.tasks[-1].output_file = interview_output
+        crew.tasks[-2].output_file = resume_output
 
         _update_progress(job_id, "tailoring_resume")
 
@@ -106,11 +115,12 @@ def _run_crew_sync(
             "job_posting_url": job_url,
             "job_name": job_details.job_name,
             "company_name": job_details.company_name,
-            "github_url": github_url,
             "resume_path": resume_path,
             "job_details_json": job_details_json,
-            "bq_dataset_name": bq_dataset_name,
         }
+        if include_github:
+            job_application_inputs["github_url"] = github_url
+            job_application_inputs["bq_dataset_name"] = bq_dataset_name
 
         result = crew.kickoff(inputs=job_application_inputs)
         logger.info("crew_runner: Crew execution completed for job %d. Log saved to %s", job_id, crew_log_path)
@@ -150,6 +160,9 @@ async def run_crew_for_job(
     """
     Async entry point for crew execution. Updates job status in DB.
     Runs the synchronous crew pipeline in a thread pool executor.
+
+    ``github_profile`` may be ``None`` when the user tailors a resume without a
+    GitHub profile; the crew then runs without the GitHub summarizer.
     """
     _update_progress(job_id, "pending")
 
@@ -166,13 +179,18 @@ async def run_crew_for_job(
             )
             await db.commit()
 
+        # github_profile may be None when the user tailors without GitHub.
+        gh_username = github_profile.github_username if github_profile else None
+        gh_url = github_profile.github_url if github_profile else None
+        gh_dataset = github_profile.bq_dataset_name if github_profile else None
+
         # Run crew in thread pool
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             _executor, _run_crew_sync,
             job_id, user_id, user_email,
-            github_profile.github_username, github_profile.github_url,
-            github_profile.bq_dataset_name, resume_content, job_url,
+            gh_username, gh_url, gh_dataset,
+            resume_content, job_url,
         )
 
         # Save extracted job details to DB on the correct async event loop

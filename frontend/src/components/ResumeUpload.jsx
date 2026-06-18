@@ -1,11 +1,13 @@
 import { useState, useRef } from 'react';
 import api from '../services/api';
-import { FiUploadCloud, FiFile, FiTrash2, FiExternalLink } from 'react-icons/fi';
+import { FiUploadCloud, FiFile, FiTrash2, FiExternalLink, FiEye, FiDownload } from 'react-icons/fi';
+import ResumePreviewModal from './ResumePreviewModal';
 
 export default function ResumeUpload({ resumes, onRefresh }) {
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState('');
+  const [previewId, setPreviewId] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleUpload = async (file) => {
@@ -36,6 +38,24 @@ export default function ResumeUpload({ resumes, onRefresh }) {
       onRefresh();
     } catch (err) {
       setError(err.response?.data?.detail || 'Cannot delete resume.');
+    }
+  };
+
+  const handleDownload = async (resume) => {
+    setError('');
+    try {
+      const res = await api.get(`/resumes/${resume.id}/content`);
+      const blob = new Blob([res.data.content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.data.filename || resume.original_filename || 'resume.md';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Download failed.');
     }
   };
 
@@ -98,15 +118,28 @@ export default function ResumeUpload({ resumes, onRefresh }) {
               padding: 'var(--space-3) var(--space-4)', background: 'var(--bg-secondary)',
               borderRadius: 'var(--radius-sm)', fontSize: 'var(--font-size-sm)',
             }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', color: 'var(--text-secondary)' }}>
-                <FiFile size={14} /> {r.original_filename}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', color: 'var(--text-secondary)', overflow: 'hidden' }}>
+                <FiFile size={14} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.original_filename}</span>
               </span>
-              <button className="btn btn-ghost btn-icon" onClick={() => handleDelete(r.id)} title="Delete">
-                <FiTrash2 size={14} color="var(--error)" />
-              </button>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)', flexShrink: 0 }}>
+                <button className="btn btn-ghost btn-icon" onClick={() => setPreviewId(r.id)} title="View">
+                  <FiEye size={14} color="var(--accent-primary)" />
+                </button>
+                <button className="btn btn-ghost btn-icon" onClick={() => handleDownload(r)} title="Download">
+                  <FiDownload size={14} color="var(--accent-primary)" />
+                </button>
+                <button className="btn btn-ghost btn-icon" onClick={() => handleDelete(r.id)} title="Delete">
+                  <FiTrash2 size={14} color="var(--error)" />
+                </button>
+              </span>
             </div>
           ))}
         </div>
+      )}
+
+      {previewId && (
+        <ResumePreviewModal resumeId={previewId} onClose={() => setPreviewId(null)} />
       )}
     </div>
   );

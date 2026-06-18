@@ -77,7 +77,9 @@ class Job(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    github_profile_id = Column(Integer, ForeignKey("github_profiles.id", ondelete="RESTRICT"), nullable=False)
+    # Optional: a user may tailor a resume without a GitHub profile.
+    # ON DELETE SET NULL so deleting a profile leaves historical jobs intact.
+    github_profile_id = Column(Integer, ForeignKey("github_profiles.id", ondelete="SET NULL"), nullable=True)
     resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="RESTRICT"), nullable=False)
     linkedin_job_url = Column(String(500), nullable=False)
 

@@ -73,7 +73,7 @@ class ResumeResponse(BaseModel):
 
 class TailorJobRequest(BaseModel):
     linkedin_job_url: str = Field(..., description="LinkedIn job posting URL")
-    github_profile_id: int = Field(..., description="ID of the GitHub profile to use")
+    github_profile_id: Optional[int] = Field(None, description="ID of the GitHub profile to use (optional)")
     resume_id: int = Field(..., description="ID of the uploaded resume to use")
 
 

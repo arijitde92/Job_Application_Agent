@@ -11,20 +11,21 @@ export default function TailorResumeForm({ githubProfiles, resumes, onJobCreated
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!jobUrl || !githubId || !resumeId) {
-      setError('All fields are required.');
+    if (!jobUrl || !resumeId) {
+      setError('Job URL and resume are required.');
       return;
     }
     setError('');
     setLoading(true);
     try {
-      const res = await api.post('/jobs/tailor', {
+      const payload = {
         linkedin_job_url: jobUrl,
-        github_profile_id: parseInt(githubId),
         resume_id: parseInt(resumeId),
-      });
+      };
+      if (githubId) payload.github_profile_id = parseInt(githubId);
+      const res = await api.post('/jobs/tailor', payload);
       setJobUrl('');
-      onJobCreated(res.data);
+      onJobCreated(res.data, !!githubId);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to start tailoring.');
     } finally {
@@ -48,9 +49,9 @@ export default function TailorResumeForm({ githubProfiles, resumes, onJobCreated
 
       <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
         <div className="input-group" style={{ flex: 1, minWidth: 200 }}>
-          <label htmlFor="github-select">GitHub Profile</label>
-          <select id="github-select" className="input-field" value={githubId} onChange={(e) => setGithubId(e.target.value)} required>
-            <option value="">Select a profile...</option>
+          <label htmlFor="github-select">GitHub Profile (optional)</label>
+          <select id="github-select" className="input-field" value={githubId} onChange={(e) => setGithubId(e.target.value)}>
+            <option value="">None / no GitHub</option>
             {githubProfiles.map((p) => (
               <option key={p.id} value={p.id}>{p.github_username}</option>
             ))}
@@ -76,7 +77,7 @@ export default function TailorResumeForm({ githubProfiles, resumes, onJobCreated
 
       {error && <p className="input-error">{error}</p>}
 
-      <button type="submit" className="btn btn-success btn-lg" disabled={loading || !jobUrl || !githubId || !resumeId} id="tailor-submit">
+      <button type="submit" className="btn btn-success btn-lg" disabled={loading || !jobUrl || !resumeId} id="tailor-submit">
         {loading ? <div className="spinner" /> : <><FiSend size={18} /> Tailor My Resume</>}
       </button>
     </form>

@@ -15,7 +15,7 @@ from app.api.deps import get_db
 from app.models import User, Job, GithubProfile, Resume
 from app.schemas import TailorJobRequest, JobResponse, JobDetailResponse
 from app.api.deps import get_current_user
-from app.services.gcs_service import download_file
+from app.services.gcs_service import download_file, delete_file
 from app.services.crew_runner import run_crew_for_job, progress_store
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -27,16 +27,22 @@ async def tailor_resume(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Start a crew execution to tailor a resume for a job posting."""
-    gh_result = await db.execute(
-        select(GithubProfile).where(
-            GithubProfile.id == req.github_profile_id,
-            GithubProfile.user_id == current_user.id,
+    """Start a crew execution to tailor a resume for a job posting.
+
+    A GitHub profile is optional — when ``github_profile_id`` is omitted the
+    resume is tailored from the job description + uploaded resume alone.
+    """
+    github_profile = None
+    if req.github_profile_id is not None:
+        gh_result = await db.execute(
+            select(GithubProfile).where(
+                GithubProfile.id == req.github_profile_id,
+                GithubProfile.user_id == current_user.id,
+            )
         )
-    )
-    github_profile = gh_result.scalar_one_or_none()
-    if not github_profile:
-        raise HTTPException(status_code=404, detail="GitHub profile not found.")
+        github_profile = gh_result.scalar_one_or_none()
+        if not github_profile:
+            raise HTTPException(status_code=404, detail="GitHub profile not found.")
 
     resume_result = await db.execute(
         select(Resume).where(Resume.id == req.resume_id, Resume.user_id == current_user.id)
@@ -91,6 +97,35 @@ async def get_job_detail(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_job(
+    job_id: int, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a generated/tailored resume job. Removes the tailored resume and
+    interview materials from GCS, then deletes the DB record.
+    """
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    # Best-effort cleanup of GCS artifacts; missing files should not block deletion.
+    for gcs_path in (job.tailored_resume_gcs_path, job.interview_materials_gcs_path):
+        if gcs_path:
+            try:
+                delete_file(gcs_path)
+            except Exception:
+                pass
+
+    await db.delete(job)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{job_id}/progress")

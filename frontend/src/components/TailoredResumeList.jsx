@@ -1,9 +1,28 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FiEye, FiDownload, FiBookOpen } from 'react-icons/fi';
+import { FiEye, FiDownload, FiBookOpen, FiTrash2 } from 'react-icons/fi';
 import api from '../services/api';
 
-export default function TailoredResumeList({ jobs, onPreviewResume }) {
+export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh }) {
   const navigate = useNavigate();
+  const [deletingId, setDeletingId] = useState(null);
+
+  const handleDelete = async (job) => {
+    const label = job.job_name
+      ? `"${job.job_name}"${job.company_name ? ` at ${job.company_name}` : ''}`
+      : 'this entry';
+    if (!window.confirm(`Delete the tailored resume for ${label}? This cannot be undone.`)) return;
+    setDeletingId(job.id);
+    try {
+      await api.delete(`/jobs/${job.id}`);
+      onRefresh?.();
+    } catch (err) {
+      console.error('Delete failed:', err);
+      alert(err.response?.data?.detail || 'Failed to delete. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const downloadFile = async (jobId, type) => {
     try {
@@ -48,22 +67,36 @@ export default function TailoredResumeList({ jobs, onPreviewResume }) {
             </div>
           </div>
           <span className={`badge badge-${job.status}`}>{job.status}</span>
-          {job.status === 'completed' && (
-            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => onPreviewResume(job.id)}>
-                <FiEye size={14} /> View Resume
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
+            {job.status === 'completed' && (
+              <>
+                <button className="btn btn-secondary btn-sm" onClick={() => onPreviewResume(job.id)}>
+                  <FiEye size={14} /> View Resume
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/interview/${job.id}`)}>
+                  <FiBookOpen size={14} /> Interview Prep
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'resume')} title="Download Resume">
+                  <FiDownload size={14} /> Resume
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'interview')} title="Download Interview">
+                  <FiDownload size={14} /> Interview
+                </button>
+              </>
+            )}
+            {job.status !== 'pending' && job.status !== 'processing' && (
+              <button
+                className="btn btn-ghost btn-icon btn-sm"
+                onClick={() => handleDelete(job)}
+                disabled={deletingId === job.id}
+                title="Delete"
+              >
+                {deletingId === job.id
+                  ? <span className="spinner" style={{ width: 14, height: 14 }} />
+                  : <FiTrash2 size={14} color="var(--error)" />}
               </button>
-              <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/interview/${job.id}`)}>
-                <FiBookOpen size={14} /> Interview Prep
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'resume')} title="Download Resume">
-                <FiDownload size={14} /> Resume
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'interview')} title="Download Interview">
-                <FiDownload size={14} /> Interview
-              </button>
-            </div>
-          )}
+            )}
+          </div>
           {job.status === 'failed' && job.error_message && (
             <p style={{ width: '100%', fontSize: 'var(--font-size-xs)', color: 'var(--error)', marginTop: 'var(--space-1)' }}>
               {job.error_message}

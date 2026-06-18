@@ -17,6 +17,7 @@ export default function HomePage() {
   const [resumes, setResumes] = useState([]);
   const [githubProfiles, setGithubProfiles] = useState([]);
   const [activeJobId, setActiveJobId] = useState(null);
+  const [activeJobHasGithub, setActiveJobHasGithub] = useState(true);
   const [completedJob, setCompletedJob] = useState(null);
   const [previewJobId, setPreviewJobId] = useState(null);
   const [previewResumeId, setPreviewResumeId] = useState(null);
@@ -32,8 +33,9 @@ export default function HomePage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleJobCreated = (job) => {
+  const handleJobCreated = (job, hasGithub = true) => {
     setActiveJobId(job.id);
+    setActiveJobHasGithub(hasGithub);
     setJobs((prev) => [job, ...prev]);
   };
 
@@ -62,7 +64,7 @@ export default function HomePage() {
           <h2 style={{ fontSize: 'var(--font-size-xl)', marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <FiActivity size={20} color="var(--accent-secondary)" /> Previously Tailored Resumes
           </h2>
-          <TailoredResumeList jobs={jobs} onPreviewResume={(id) => setPreviewJobId(id)} />
+          <TailoredResumeList jobs={jobs} onPreviewResume={(id) => setPreviewJobId(id)} onRefresh={fetchData} />
         </section>
 
         <section style={{ marginBottom: 'var(--space-10)' }}>
@@ -87,7 +89,7 @@ export default function HomePage() {
 
         {activeJobId && (
           <section style={{ marginBottom: 'var(--space-10)' }}>
-            <ProgressTracker jobId={activeJobId} onComplete={handleComplete} />
+            <ProgressTracker jobId={activeJobId} includeGithub={activeJobHasGithub} onComplete={handleComplete} />
           </section>
         )}
       </main>

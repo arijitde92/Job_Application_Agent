@@ -9,9 +9,12 @@ const STEPS = [
   { key: 'uploading_results', label: 'Uploading results' },
 ];
 
-export default function ProgressTracker({ jobId, onComplete }) {
+export default function ProgressTracker({ jobId, includeGithub = true, onComplete }) {
   const [currentStep, setCurrentStep] = useState('pending');
   const [error, setError] = useState(null);
+
+  // Without GitHub, the backend never emits the 'searching_projects' step.
+  const steps = includeGithub ? STEPS : STEPS.filter((s) => s.key !== 'searching_projects');
 
   useEffect(() => {
     if (!jobId) return;
@@ -36,7 +39,7 @@ export default function ProgressTracker({ jobId, onComplete }) {
     return () => eventSource.close();
   }, [jobId, onComplete]);
 
-  const getStepIndex = () => STEPS.findIndex((s) => s.key === currentStep);
+  const getStepIndex = () => steps.findIndex((s) => s.key === currentStep);
   const activeIdx = getStepIndex();
 
   return (
@@ -51,7 +54,7 @@ export default function ProgressTracker({ jobId, onComplete }) {
       </h4>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-        {STEPS.map((step, idx) => {
+        {steps.map((step, idx) => {
           let status = 'pending';
           if (currentStep === 'completed') status = 'done';
           else if (currentStep === 'failed' && idx <= activeIdx) status = idx === activeIdx ? 'failed' : 'done';
