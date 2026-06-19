@@ -31,7 +31,7 @@ dependencies = [
     "google-cloud-bigquery>=3.0.0",
     # ── LLM / Agent pipeline (CrewAI) ──────────────────────────────────────
     "crewai[anthropic]",
-    "crewai-tools",
+    "crewai-tools[mcp]",
     # ── RAG / embeddings ───────────────────────────────────────────────────
     "langchain-community",
     "langchain-google-genai",
