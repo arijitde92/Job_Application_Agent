@@ -39,6 +39,12 @@ export default function HomePage() {
     setJobs((prev) => [job, ...prev]);
   };
 
+  const handleRetry = (job) => {
+    setActiveJobId(job.id);
+    setActiveJobHasGithub(job.github_profile_id != null);
+    fetchData();
+  };
+
   const handleComplete = useCallback(async () => {
     try {
       const res = await api.get(`/jobs/${activeJobId}`);
@@ -64,7 +70,7 @@ export default function HomePage() {
           <h2 style={{ fontSize: 'var(--font-size-xl)', marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <FiActivity size={20} color="var(--accent-secondary)" /> Previously Tailored Resumes
           </h2>
-          <TailoredResumeList jobs={jobs} onPreviewResume={(id) => setPreviewJobId(id)} onRefresh={fetchData} />
+          <TailoredResumeList jobs={jobs} onPreviewResume={(id) => setPreviewJobId(id)} onRefresh={fetchData} onRetry={handleRetry} />
         </section>
 
         <section style={{ marginBottom: 'var(--space-10)' }}>

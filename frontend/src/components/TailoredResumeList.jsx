@@ -1,11 +1,25 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FiEye, FiDownload, FiBookOpen, FiTrash2 } from 'react-icons/fi';
+import { FiEye, FiDownload, FiBookOpen, FiTrash2, FiRefreshCw } from 'react-icons/fi';
 import api from '../services/api';
 
-export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh }) {
+export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh, onRetry }) {
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState(null);
+  const [retryingId, setRetryingId] = useState(null);
+
+  const handleRetry = async (job) => {
+    setRetryingId(job.id);
+    try {
+      const res = await api.post(`/jobs/${job.id}/retry`);
+      onRetry?.(res.data);
+    } catch (err) {
+      console.error('Retry failed:', err);
+      alert(err.response?.data?.detail || 'Failed to retry. Please try again.');
+    } finally {
+      setRetryingId(null);
+    }
+  };
 
   const handleDelete = async (job) => {
     const label = job.job_name
@@ -83,6 +97,18 @@ export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh })
                   <FiDownload size={14} /> Interview
                 </button>
               </>
+            )}
+            {(job.status === 'failed' || job.status === 'pending') && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => handleRetry(job)}
+                disabled={retryingId === job.id}
+                title="Retry"
+              >
+                {retryingId === job.id
+                  ? <span className="spinner" style={{ width: 14, height: 14 }} />
+                  : <><FiRefreshCw size={14} /> Retry</>}
+              </button>
             )}
             {job.status !== 'pending' && job.status !== 'processing' && (
               <button
