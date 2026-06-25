@@ -5,22 +5,48 @@ FastAPI application entry point: CORS, lifespan events, and router registration.
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import update
 
 from app.core.config import get_settings
 from app.core.database import engine, Base
+from app.core.logging import get_logger
 from app.api.v1 import auth, github, resumes, jobs
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create database tables on startup and dispose the engine on shutdown."""
+    """Create tables; best-effort fail jobs stuck >3h; dispose engine on shutdown."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Best-effort: fail jobs left pending/processing for >3h (orphaned by a
+        # prior restart). Reuses THIS connection — no new session/checkout — and
+        # swallows all errors so it can never abort startup or kill the proxy.
+        try:
+            from app.models import Job
+            cutoff = datetime.utcnow() - timedelta(hours=3)
+            await conn.execute(
+                update(Job)
+                .where(
+                    Job.status.in_(("pending", "processing")),
+                    Job.created_at < cutoff,
+                )
+                .values(
+                    status="failed",
+                    error_message="Job was stuck in progress for over 3 hours "
+                                  "(likely a server restart). Please retry.",
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — never let cleanup break startup
+            logger.warning("Startup stuck-job cleanup skipped: %s", exc)
+
     yield
     await engine.dispose()
 

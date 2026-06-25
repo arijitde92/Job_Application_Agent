@@ -8,7 +8,7 @@ downloading tailored resumes and interview materials.
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse, Response
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -126,6 +126,66 @@ async def delete_job(
     await db.delete(job)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{job_id}/retry", response_model=JobResponse)
+async def retry_job(
+    job_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-run a failed or stuck job: reset to pending, clear error, relaunch crew."""
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status == "completed":
+        raise HTTPException(status_code=409, detail="Completed jobs cannot be retried.")
+    if job.status == "processing":
+        raise HTTPException(status_code=409, detail="Job is already running.")
+
+    # Re-fetch GitHub profile (optional; FK is SET NULL so it may be None already).
+    github_profile = None
+    if job.github_profile_id is not None:
+        gh_result = await db.execute(
+            select(GithubProfile).where(
+                GithubProfile.id == job.github_profile_id,
+                GithubProfile.user_id == current_user.id,
+            )
+        )
+        github_profile = gh_result.scalar_one_or_none()  # gone → run without GitHub
+
+    # Resume must still exist.
+    resume_result = await db.execute(
+        select(Resume).where(Resume.id == job.resume_id, Resume.user_id == current_user.id)
+    )
+    resume = resume_result.scalar_one_or_none()
+    if not resume:
+        raise HTTPException(
+            status_code=409,
+            detail="The resume for this job no longer exists. Cannot retry.",
+        )
+
+    await db.execute(
+        update(Job).where(Job.id == job_id).values(status="pending", error_message=None)
+    )
+    await db.commit()
+    await db.refresh(job)
+
+    # Pre-seed progress so a re-attaching SSE stream doesn't see the stale
+    # terminal 'failed' step and close instantly.
+    progress_store[job_id] = {"current_step": "pending", "error": None}
+
+    asyncio.create_task(
+        run_crew_for_job(
+            job_id=job.id, user_id=current_user.id, user_email=current_user.email,
+            github_profile=github_profile, resume_gcs_path=resume.gcs_path,
+            job_url=job.linkedin_job_url,
+        )
+    )
+    return job
 
 
 @router.get("/{job_id}/progress")

@@ -106,11 +106,15 @@ def api() -> None:
     """Start the FastAPI app with autoreload (development)."""
     import uvicorn
 
+    # uvicorn excludes whole directory trees only when given absolute paths
+    # (it matches them against each changed file's absolute parents). Relative
+    # globs like ".venv/*" do NOT work. "*.log" still matches by filename.
     uvicorn.run(
         "app.main:app",
         host=DEFAULT_API_HOST,
         port=int(DEFAULT_API_PORT),
         reload=True,
+        reload_excludes=[str(BACKEND_DIR / ".venv"), str(BACKEND_DIR / "logs"), "*.log"],
     )
 
 
@@ -225,6 +229,10 @@ def dev() -> None:
                 [
                     sys.executable, "-m", "uvicorn", "app.main:app",
                     "--host", DEFAULT_API_HOST, "--port", DEFAULT_API_PORT, "--reload",
+                    # Absolute dir paths so uvicorn excludes the whole tree (see api()).
+                    "--reload-exclude", str(BACKEND_DIR / ".venv"),
+                    "--reload-exclude", str(BACKEND_DIR / "logs"),
+                    "--reload-exclude", "*.log",
                 ],
                 BACKEND_DIR,
             )

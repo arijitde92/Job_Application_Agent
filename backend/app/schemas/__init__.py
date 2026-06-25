@@ -79,6 +79,7 @@ class TailorJobRequest(BaseModel):
 
 class JobResponse(BaseModel):
     id: int
+    github_profile_id: Optional[int] = None
     linkedin_job_url: str
     job_name: Optional[str] = None
     company_name: Optional[str] = None
