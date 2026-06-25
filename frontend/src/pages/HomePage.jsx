@@ -33,6 +33,19 @@ export default function HomePage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Jobs that were in-flight before this page mounted (e.g. after a reload or
+  // from a previous session) have no SSE tracker attached, so the list would
+  // sit at PENDING/PROCESSING until a manual refresh. Poll while any job is in
+  // a non-terminal state; stop once everything has settled.
+  useEffect(() => {
+    const hasInFlight = jobs.some(
+      (job) => job.status === 'pending' || job.status === 'processing'
+    );
+    if (!hasInFlight) return;
+    const id = setInterval(fetchData, 5000);
+    return () => clearInterval(id);
+  }, [jobs, fetchData]);
+
   const handleJobCreated = (job, hasGithub = true) => {
     setActiveJobId(job.id);
     setActiveJobHasGithub(hasGithub);
