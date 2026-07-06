@@ -79,7 +79,7 @@ def _setup_root_logger() -> None:
         backupCount=BACKUP_COUNT,
         encoding="utf-8",
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(getattr(logging, LOG_LEVEL_ENV, logging.INFO))
     file_handler.setFormatter(file_fmt)
 
     # ── Console handler ───────────────────────────────────────────────────────

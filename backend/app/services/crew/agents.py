@@ -148,10 +148,11 @@ def repo_content_searcher(query: str, job_description: str = None, top_k: int = 
         } for content, metadata in results
     ]
 
-# Agent 1: GitHub Project Summarizer
 # NOTE: The Researcher agent has been removed. Job extraction is done
 # directly in Job_Applier.py via extract_linkedin_job_details() and the
 # structured JobDetails are passed into every task via crew input variables.
+
+# Agent 1: GitHub Project Summarizer
 github_project_summarizer = Agent(
     role="GitHub Project Summarizer",
     goal="Summarize the user's most relevant GitHub projects for a job application, highlighting tech stacks, languages, frameworks, tools, and cloud technologies used.",
@@ -170,7 +171,7 @@ github_project_summarizer = Agent(
 )
 
 
-# Agent 3: Profiler
+# Agent 2: Profiler
 profiler = Agent(
     role="Personal Profiler for Engineers",
     goal="Do incredible analytical research on job applicants to help them stand out in the job market",
@@ -187,7 +188,7 @@ profiler = Agent(
     )
 )
 
-# Agent 4: Resume Strategist
+# Agent 3: Resume Strategist
 resume_strategist = Agent(
     role="Resume Strategist for Engineers",
     goal="Find all the best ways to make a resume stand out in the job market.",
@@ -205,7 +206,7 @@ resume_strategist = Agent(
     )
 )
 
-# Agent 5: Interview Preparer
+# Agent 4: Interview Preparer
 interview_preparer = Agent(
     role="Engineering Interview Preparer",
     goal="Create interview questions and talking points "
