@@ -4,6 +4,8 @@ resume_router.py
 Endpoints for uploading, listing, previewing, and deleting resumes.
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,8 @@ from app.core.config import get_settings
 settings = get_settings()
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 
+ALLOWED_RESUME_EXTENSIONS = {".md", ".pdf", ".docx"}
+
 
 @router.post("/upload", response_model=ResumeResponse, status_code=status.HTTP_201_CREATED)
 async def upload_resume_file(
@@ -25,12 +29,12 @@ async def upload_resume_file(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a .md resume file to GCS."""
+    """Upload a resume file (.md, .pdf or .docx) to GCS."""
     # Validate file extension
-    if not file.filename or not file.filename.endswith(".md"):
+    if not file.filename or Path(file.filename).suffix.lower() not in ALLOWED_RESUME_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only Markdown (.md) files are accepted.",
+            detail="Only Markdown (.md), PDF (.pdf) or Word (.docx) files are accepted.",
         )
 
     # Read file content
@@ -119,6 +123,15 @@ async def get_resume_content(
     resume = result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found.")
+
+    # Binary resumes (.pdf/.docx) cannot be rendered as markdown text —
+    # the /preview signed-URL endpoint handles those.
+    if Path(resume.original_filename or "").suffix.lower() != ".md":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="In-browser text preview is only available for Markdown resumes. "
+                   "Use the preview endpoint for PDF/DOCX files.",
+        )
 
     try:
         content_bytes = download_file(resume.gcs_path)

@@ -64,6 +64,7 @@ class ResumeResponse(BaseModel):
     id: int
     original_filename: str
     gcs_path: str
+    parsed_resume_path: Optional[str] = None
     uploaded_at: datetime
 
     model_config = {"from_attributes": True}

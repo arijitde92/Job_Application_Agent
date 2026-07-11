@@ -5,17 +5,26 @@ Google Cloud Storage helpers for uploading, downloading, and generating
 signed URLs for resume and interview material files.
 
 Bucket structure:
-    gs://<bucket>/uploads/<user_id>/<filename>.md        — User-uploaded original resumes
+    gs://<bucket>/uploads/<user_id>/<filename>           — User-uploaded original resumes (.md/.pdf/.docx)
+    gs://<bucket>/parsed/<user_id>/<name>_<user_id>_<resume_id>_parsed_resume.json — Agent-parsed resume JSON
     gs://<bucket>/tailored/<user_id>/<job_id>_resume.md  — Agent-generated tailored resumes
     gs://<bucket>/tailored/<user_id>/<job_id>_interview.md — Agent-generated interview materials
 """
 
 import datetime
+from pathlib import Path
+
 from google.cloud import storage
 
 from app.core.config import get_settings
 
 settings = get_settings()
+
+_RESUME_CONTENT_TYPES = {
+    ".md": "text/markdown",
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 def _get_client() -> storage.Client:
@@ -52,12 +61,39 @@ def upload_resume(user_id: int, file_bytes: bytes, filename: str) -> str:
         )
 
     blob_path = f"uploads/{user_id}/{filename}"
+    content_type = _RESUME_CONTENT_TYPES.get(
+        Path(filename).suffix.lower(), "application/octet-stream"
+    )
     bucket = _get_bucket()
     blob = bucket.blob(blob_path)
-    blob.upload_from_string(file_bytes, content_type="text/markdown")
+    blob.upload_from_string(file_bytes, content_type=content_type)
 
     gcs_path = f"gs://{settings.GCS_BUCKET_NAME}/{blob_path}"
     return gcs_path
+
+
+def upload_parsed_resume(user_id: int, filename: str, content: str) -> str:
+    """
+    Upload the resume_analyzer agent's parsed-resume JSON to GCS.
+
+    The blob path is deterministic (parsed/<user_id>/<filename>), so a retried
+    job simply overwrites the previous upload.
+
+    Args:
+        user_id: The user's database ID.
+        filename: Parsed-resume filename
+            (<user_name>_<user_id>_<resume_id>_parsed_resume.json).
+        content: JSON content of the parsed resume.
+
+    Returns:
+        The GCS path (gs://bucket/parsed/<user_id>/<filename>).
+    """
+    blob_path = f"parsed/{user_id}/{filename}"
+    bucket = _get_bucket()
+    blob = bucket.blob(blob_path)
+    blob.upload_from_string(content.encode("utf-8"), content_type="application/json")
+
+    return f"gs://{settings.GCS_BUCKET_NAME}/{blob_path}"
 
 
 def upload_tailored_resume(user_id: int, job_id: int, content: str, filename: str) -> str:

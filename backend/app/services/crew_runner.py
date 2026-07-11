@@ -45,11 +45,16 @@ def _update_progress(job_id: int, step: str, error: str = None):
 def _run_crew_sync(
     job_id: int, user_id: int, user_email: str,
     github_username: str = None, github_url: str = None, bq_dataset_name: str = None,
-    resume_content: str = None, job_url: str = None,
+    resume_bytes: bytes = None, resume_filename: str = None, job_url: str = None,
+    resume_id: int = None, user_name: str = None,
 ):
     """
     Synchronous crew execution — runs in a thread.
     This imports and uses the existing crew pipeline.
+
+    The raw resume file bytes (.pdf/.docx/.md) are parsed to text BEFORE the
+    crew is built; a ResumeParsingError aborts the run so the crew never
+    starts and the job is marked failed (the UI offers a retry).
 
     When no GitHub URL is supplied the crew is built without the GitHub
     summarizer agent/task and tailors the resume from the resume + job
@@ -72,20 +77,42 @@ def _run_crew_sync(
         logger.error("crew_runner: Failed to extract job details for job %d: %s", job_id, e)
         raise RuntimeError(f"Failed to extract job details: {e}")
 
+    # Step 2: Parse the resume document (.pdf/.docx/.md) into text.
+    # Failure here must stop everything — no crew, no LLM tokens.
+    _update_progress(job_id, "parsing_resume")
+    from app.services.resume_parser import ResumeParsingError, extract_resume_text
 
-    # Step 2: Write resume to temp file for crew to read
+    suffix = Path(resume_filename).suffix.lower() if resume_filename else ".md"
+    with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False, prefix="resume_raw_") as f:
+        f.write(resume_bytes)
+        raw_resume_path = f.name
+
+    try:
+        resume_text = extract_resume_text(raw_resume_path)
+    except ResumeParsingError as e:
+        logger.error(
+            "crew_runner: Resume parsing failed for job %d (resume %s, file '%s'): %s",
+            job_id, resume_id, resume_filename, e, exc_info=True,
+        )
+        if os.path.exists(raw_resume_path):
+            os.unlink(raw_resume_path)
+        raise RuntimeError(f"Resume parsing failed: {e}")
+
+    # Step 3: Write extracted text to a temp .md for the crew to read
+    # (FileReadTool / MDXSearchTool operate on this file).
     # The "searching_projects" step only applies when GitHub repos are indexed;
     # without GitHub we advance straight to building the profile.
     _update_progress(job_id, "searching_projects" if include_github else "building_profile")
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, prefix="resume_") as f:
-        f.write(resume_content)
+        f.write(resume_text)
         resume_path = f.name
 
     try:
-        # Step 3: Build crew and run
+        # Step 4: Build crew and run
         _update_progress(job_id, "building_profile")
 
         from app.services.crew.crew import build_crew
+        from app.services.crew.resume_tools import ResumeAnalysisContext
 
         applicant_name = user_email.split("@")[0].replace(".", "_")
 
@@ -97,9 +124,20 @@ def _run_crew_sync(
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         crew_log_path = str(_LOG_DIR / f"{ts}_crew")
 
+        # Identity context for the resume_analyzer's save tool: the parsed
+        # JSON is uploaded to GCS and recorded on resumes.parsed_resume_path.
+        # resume_text is passed as the hallucination-guardrail reference context.
+        resume_ctx = ResumeAnalysisContext(
+            user_id=user_id,
+            resume_id=resume_id,
+            user_name=user_name or applicant_name,
+            local_only=False,
+            resume_text=resume_text,
+        )
+
         crew = build_crew(
             output_log_file=crew_log_path, verbose=True, tracing=False,
-            include_github=include_github,
+            include_github=include_github, resume_ctx=resume_ctx,
         )
         logger.info("crew_runner: Crew verbose log → %s", crew_log_path)
 
@@ -124,6 +162,11 @@ def _run_crew_sync(
 
         result = crew.kickoff(inputs=job_application_inputs)
         logger.info("crew_runner: Crew execution completed for job %d. Log saved to %s", job_id, crew_log_path)
+        if resume_ctx.state.get("gcs_path"):
+            logger.info(
+                "crew_runner: Parsed resume for job %d stored at %s",
+                job_id, resume_ctx.state["gcs_path"],
+            )
 
         # Read output files
         tailored_resume_content = ""
@@ -147,7 +190,7 @@ def _run_crew_sync(
 
     finally:
         # Clean up temp files
-        for path in [resume_path]:
+        for path in [resume_path, raw_resume_path]:
             if os.path.exists(path):
                 os.unlink(path)
 
@@ -156,6 +199,7 @@ def _run_crew_sync(
 async def run_crew_for_job(
     job_id: int, user_id: int, user_email: str,
     github_profile, resume_gcs_path: str, job_url: str,
+    resume_id: int = None, user_name: str = None, resume_filename: str = None,
 ):
     """
     Async entry point for crew execution. Updates job status in DB.
@@ -163,13 +207,17 @@ async def run_crew_for_job(
 
     ``github_profile`` may be ``None`` when the user tailors a resume without a
     GitHub profile; the crew then runs without the GitHub summarizer.
+
+    ``resume_id`` / ``user_name`` / ``resume_filename`` identify the resume for
+    the resume_analyzer agent (parsed-resume filename, GCS blob, and the
+    resumes.parsed_resume_path DB update). The raw bytes are kept binary —
+    PDF/DOCX resumes must not be utf-8 decoded.
     """
     _update_progress(job_id, "pending")
 
     try:
-        # Download resume from GCS
+        # Download resume from GCS (raw bytes — may be a binary .pdf/.docx)
         resume_bytes = download_file(resume_gcs_path)
-        resume_content = resume_bytes.decode("utf-8")
 
         # Update status to processing
         async with AsyncSessionLocal() as db:
@@ -190,7 +238,8 @@ async def run_crew_for_job(
             _executor, _run_crew_sync,
             job_id, user_id, user_email,
             gh_username, gh_url, gh_dataset,
-            resume_content, job_url,
+            resume_bytes, resume_filename, job_url,
+            resume_id, user_name,
         )
 
         # Save extracted job details to DB on the correct async event loop

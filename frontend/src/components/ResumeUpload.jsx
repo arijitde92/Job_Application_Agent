@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import api from '../services/api';
-import { FiUploadCloud, FiFile, FiTrash2, FiExternalLink, FiEye, FiDownload } from 'react-icons/fi';
+import { FiUploadCloud, FiFile, FiTrash2, FiEye, FiDownload } from 'react-icons/fi';
 import ResumePreviewModal from './ResumePreviewModal';
 
 export default function ResumeUpload({ resumes, onRefresh }) {
@@ -12,8 +12,8 @@ export default function ResumeUpload({ resumes, onRefresh }) {
 
   const handleUpload = async (file) => {
     if (!file) return;
-    if (!file.name.endsWith('.md')) {
-      setError('Only Markdown (.md) files are accepted.');
+    if (!/\.(md|pdf|docx)$/i.test(file.name)) {
+      setError('Only Markdown (.md), PDF (.pdf) or Word (.docx) files are accepted.');
       return;
     }
     setError('');
@@ -41,9 +41,17 @@ export default function ResumeUpload({ resumes, onRefresh }) {
     }
   };
 
+  const isMarkdown = (name) => /\.md$/i.test(name || '');
+
   const handleDownload = async (resume) => {
     setError('');
     try {
+      if (!isMarkdown(resume.original_filename)) {
+        // Binary resumes (.pdf/.docx) are served via a GCS signed URL.
+        const res = await api.get(`/resumes/${resume.id}/preview`);
+        window.open(res.data.signed_url, '_blank', 'noopener');
+        return;
+      }
       const res = await api.get(`/resumes/${resume.id}/content`);
       const blob = new Blob([res.data.content], { type: 'text/markdown' });
       const url = URL.createObjectURL(blob);
@@ -56,6 +64,21 @@ export default function ResumeUpload({ resumes, onRefresh }) {
       URL.revokeObjectURL(url);
     } catch (err) {
       setError(err.response?.data?.detail || 'Download failed.');
+    }
+  };
+
+  const handleView = async (resume) => {
+    setError('');
+    if (isMarkdown(resume.original_filename)) {
+      setPreviewId(resume.id);
+      return;
+    }
+    // The markdown modal can't render binaries — open the signed URL instead.
+    try {
+      const res = await api.get(`/resumes/${resume.id}/preview`);
+      window.open(res.data.signed_url, '_blank', 'noopener');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Preview failed.');
     }
   };
 
@@ -91,20 +114,10 @@ export default function ResumeUpload({ resumes, onRefresh }) {
           {uploading ? 'Uploading...' : 'Drag & drop or click to upload'}
         </p>
         <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', marginTop: 'var(--space-1)' }}>
-          Only .md files accepted
+          .md, .pdf and .docx files accepted
         </p>
-        <input ref={fileInputRef} type="file" accept=".md" hidden
+        <input ref={fileInputRef} type="file" accept=".md,.pdf,.docx" hidden
           onChange={(e) => handleUpload(e.target.files[0])} />
-      </div>
-
-      {/* Conversion links */}
-      <div style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-4)', fontSize: 'var(--font-size-xs)' }}>
-        <a href="https://pdf2md.morethan.io/" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          PDF → MD <FiExternalLink size={10} />
-        </a>
-        <a href="https://word2md.com/" target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          Word → MD <FiExternalLink size={10} />
-        </a>
       </div>
 
       {error && <p className="input-error" style={{ marginBottom: 'var(--space-3)' }}>{error}</p>}
@@ -123,7 +136,7 @@ export default function ResumeUpload({ resumes, onRefresh }) {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.original_filename}</span>
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)', flexShrink: 0 }}>
-                <button className="btn btn-ghost btn-icon" onClick={() => setPreviewId(r.id)} title="View">
+                <button className="btn btn-ghost btn-icon" onClick={() => handleView(r)} title="View">
                   <FiEye size={14} color="var(--accent-primary)" />
                 </button>
                 <button className="btn btn-ghost btn-icon" onClick={() => handleDownload(r)} title="Download">

@@ -182,3 +182,5 @@ client_secret_*.json
 *-service-account*.json
 project-*.json
 backend/credentials/
+**:Zone.Identifier
+backend/tests/output/

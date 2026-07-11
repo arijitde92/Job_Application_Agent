@@ -5,6 +5,8 @@ SQLAlchemy async engine, session factory, and dependency injection for FastAPI.
 Uses asyncmy driver for Cloud SQL MySQL connectivity.
 """
 
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
@@ -40,6 +42,27 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+
+# ── Sync engine (lazy) ────────────────────────────────────────────────────────
+# The async engine's pooled connections are bound to the main event loop, so
+# synchronous code running in worker threads (e.g. CrewAI tools inside the
+# crew_runner's ThreadPoolExecutor) must not use it. They get a small pymysql
+# engine instead, created on first use.
+_sync_engine: Engine | None = None
+
+
+def get_sync_engine() -> Engine:
+    """Return the lazily-created synchronous engine (pymysql driver)."""
+    global _sync_engine
+    if _sync_engine is None:
+        _sync_engine = create_engine(
+            settings.mysql_url_sync,
+            pool_pre_ping=True,
+            pool_size=2,
+            max_overflow=2,
+        )
+    return _sync_engine
 
 
 # ── Declarative Base ──────────────────────────────────────────────────────────

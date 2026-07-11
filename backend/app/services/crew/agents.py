@@ -19,12 +19,21 @@ from app.core.logging import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
-# LLM configuration — Claude Sonnet 4
+# LLM configuration — Gemini
 gemini_llm = LLM(
     model="gemini/gemini-2.5-flash",
     api_key=os.environ.get("GEMINI_API_KEY"),
     temperature=0.7,
     max_tokens=8000
+)
+
+# Low-temperature variant for structured extraction (resume_analyzer): the
+# parsed-resume JSON must be reproduced verbatim and can exceed 8k tokens.
+gemini_llm_extraction = LLM(
+    model="gemini/gemini-2.5-flash",
+    api_key=os.environ.get("GEMINI_API_KEY"),
+    temperature=0.1,
+    max_tokens=16000
 )
 
 search_tool = SerperDevTool()
@@ -171,7 +180,37 @@ github_project_summarizer = Agent(
 )
 
 
-# Agent 2: Profiler
+# Agent 2: Resume Analyzer
+# No agent-level tools: the per-run save_parsed_resume tool (closured over
+# user/resume IDs) is attached at the Task level by build_tasks(), which keeps
+# this module-level singleton thread-safe across concurrent crew runs.
+resume_analyzer = Agent(
+    role="Resume Analyzer",
+    goal=(
+        "Carefully scan a resume and extract every piece of relevant applicant "
+        "information into a strictly valid JSON document matching the required schema."
+    ),
+    llm=gemini_llm_extraction,
+    verbose=True,
+    max_iter=8,
+    max_rpm=10,
+    respect_context_window=True,
+    backstory=(
+        "You are a meticulous structured-data extraction specialist for resumes. "
+        "You read every line of a resume and map each fact to the correct field of "
+        "a fixed JSON schema. You never invent, guess, or embellish information: "
+        "every value you output must be traceable to explicit text in the resume, "
+        "and anything the resume does not state is left as an empty string, null, an "
+        "empty list, or false, exactly as the schema prescribes. When the resume "
+        "groups skills under category headings you preserve those headings verbatim; "
+        "when it does not, you place the skills under a single \"Default\" category. "
+        "You always produce strictly valid JSON — no comments, no trailing commas, "
+        "no markdown fences — and you always persist your work with the "
+        "save_parsed_resume tool before finishing."
+    )
+)
+
+# Agent 3: Profiler
 profiler = Agent(
     role="Personal Profiler for Engineers",
     goal="Do incredible analytical research on job applicants to help them stand out in the job market",
@@ -188,7 +227,7 @@ profiler = Agent(
     )
 )
 
-# Agent 3: Resume Strategist
+# Agent 4: Resume Strategist
 resume_strategist = Agent(
     role="Resume Strategist for Engineers",
     goal="Find all the best ways to make a resume stand out in the job market.",
@@ -206,7 +245,7 @@ resume_strategist = Agent(
     )
 )
 
-# Agent 4: Interview Preparer
+# Agent 5: Interview Preparer
 interview_preparer = Agent(
     role="Engineering Interview Preparer",
     goal="Create interview questions and talking points "
