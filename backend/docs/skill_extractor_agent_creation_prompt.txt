@@ -1,0 +1,173 @@
+Create a new Crew AI Agent called "skill_extractor" that can extract skills and certifications from a given text like resume, job description or a github profile. It should carefully scan the entire text and find out keywords that match to a skill or certification. Keep in mind that certifications can only be extracted from resumes and not job description or github profiles. Also soft skills can only be extracted from resumes and job_descriptions but not github profiles. It needs to produce the output in a json format as shown below - 
+"""
+{
+	"data_source": "resume" or "job description" or "github profile"
+	"skills": {
+		"programming_languages": [],
+		"frameworks": [],
+		"operating_systems": [],
+		"cloud_services": [],
+		"tools": [],
+		"libraries": [],
+		"soft_skills": [],
+		"tech_skills": [],
+	},
+	"certifications": {
+		"certificate_1": {
+			"title": "<certificate title>",
+			"issuer": "<certificate issuer>",
+			"issue_date": "<date of issue>",
+			"expiry_date": "<date of expiry>", or "N/A" if it does not expire
+			"verify_link": "<valid_url>" or "N/A" if not found
+		},
+		"certificate_2": {
+			"title": 
+			"issuer": 
+			"issue_date": 
+			"expiry_date": 
+			"verify_link":
+		},
+		...
+		"certificate_n": {
+			"title": 
+			"issuer": 
+			"issue_date": 
+			"expiry_date": 
+			"verify_link":
+		},
+	}
+}
+"""
+
+Below are examples of complete sample JSONs.
+1.
+{
+  "data_source": "resume",
+  "skills": {
+    "programming_languages": ["Python", "C++", "SQL"],
+    "frameworks": ["TensorFlow", "PyTorch", "Keras"],
+    "operating_systems": ["Ubuntu Linux", "macOS"],
+    "cloud_services": ["AWS SageMaker", "Google Cloud AI Platform"],
+    "tools": ["Docker", "Git", "MLflow", "Jupyter"],
+    "libraries": ["Scikit-learn", "Pandas", "NumPy", "Matplotlib"],
+    "soft_skills": ["Problem Solving", "Cross-functional Communication", "Adaptability"],
+    "tech_skills": ["Model Deployment", "Deep Learning", "Computer Vision", "NLP"]
+  },
+  "certifications": {
+    "certificate_1": {
+      "title": "AWS Certified Machine Learning - Specialty",
+      "issuer": "Amazon Web Services",
+      "issue_date": "2023-05-15",
+      "expiry_date": "2026-05-15",
+      "verify_link": "https://www.credly.com/badges/example-badge-id-ml"
+    },
+    "certificate_2": {
+      "title": "Deep Learning Specialization",
+      "issuer": "Coursera (DeepLearning.AI)",
+      "issue_date": "2022-08-10",
+      "expiry_date": "N/A",
+      "verify_link": "https://www.coursera.org/account/accomplishments/specialization/example"
+    }
+  }
+}
+
+2.
+{
+  "data_source": "resume",
+  "skills": {
+    "programming_languages": ["Python", "Bash"],
+    "frameworks": ["Ansible"],
+    "operating_systems": ["Cisco IOS", "Junos OS", "CentOS"],
+    "cloud_services": ["AWS VPC", "Azure Virtual Network"],
+    "tools": ["Wireshark", "SolarWinds", "Cisco Packet Tracer", "Putty"],
+    "libraries": ["Netmiko", "NAPALM"],
+    "soft_skills": ["Critical Thinking", "Under Pressure Troubleshooting", "Team Leadership"],
+    "tech_skills": ["BGP/OSPF Routing", "VLAN/STP Switching", "Firewall Configuration", "Network Automation"]
+  },
+  "certifications": {
+    "certificate_1": {
+      "title": "Cisco Certified Network Professional (CCNP) Enterprise",
+      "issuer": "Cisco",
+      "issue_date": "2022-11-20",
+      "expiry_date": "2025-11-20",
+      "verify_link": "https://www.credly.com/badges/example-badge-id-ccnp"
+    },
+    "certificate_2": {
+      "title": "CompTIA Network+",
+      "issuer": "CompTIA",
+      "issue_date": "2019-04-12",
+      "expiry_date": "2022-04-12",
+      "verify_link": "N/A"
+    }
+  }
+}
+
+3.
+{
+  "data_source": "job description",
+  "skills": {
+    "programming_languages": ["Python", "R", "Scala", "SQL"],
+    "frameworks": ["Apache Spark", "Hadoop"],
+    "operating_systems": ["Linux", "Windows"],
+    "cloud_services": ["AWS", "GCP BigQuery"],
+    "tools": ["Tableau", "PowerBI", "Git", "Airflow"],
+    "libraries": ["SciPy", "Statsmodels", "Seaborn", "NLTK"],
+    "soft_skills": ["Storytelling", "Business Acumen", "Analytical Thinking"],
+    "tech_skills": ["Statistical Modeling", "A/B Testing", "Data Mining", "Predictive Analytics"]
+  },
+  "certifications": "N/A"
+}
+
+4.
+{
+  "data_source": "job description",
+  "skills": {
+    "programming_languages": ["Python", "Go", "PowerShell", "C"],
+    "frameworks": ["Metasploit Framework", "MITRE ATT&CK"],
+    "operating_systems": ["Kali Linux", "Windows Server", "Debian"],
+    "cloud_services": ["Azure Security Center", "AWS Shield"],
+    "tools": ["Burp Suite", "Nessus", "Splunk", "Wireshark"],
+    "libraries": ["OpenSSL", "Cryptography"],
+    "soft_skills": ["Attention to Detail", "Ethics and Integrity", "Clear Reporting"],
+    "tech_skills": ["Penetration Testing", "Incident Response", "Vulnerability Assessment", "Cryptography"]
+  },
+  "certifications": "N/A"
+}
+
+5.
+{
+  "data_source": "github profile",
+  "skills": {
+    "programming_languages": ["JavaScript", "TypeScript", "HTML5", "CSS3"],
+    "frameworks": ["React.js", "Vue.js", "Next.js"],
+    "operating_systems": ["macOS", "Windows"],
+    "cloud_services": ["Vercel", "Netlify", "Firebase"],
+    "tools": ["Webpack", "Vite", "Figma", "Git"],
+    "libraries": ["Redux", "Tailwind CSS", "Framer Motion", "React Query"],
+    "soft_skills": "N/A",
+    "tech_skills": ["Responsive Web Design", "Web Accessibility (a11y)", "State Management", "SEO Optimization"]
+  },
+  "certifications": "N/A"
+}
+
+6.
+{
+  "data_source": "github profile",
+  "skills": {
+    "programming_languages": ["JavaScript", "Python", "Java", "SQL"],
+    "frameworks": ["Node.js", "Express.js", "Django", "Spring Boot", "React"],
+    "operating_systems": ["Ubuntu", "macOS"],
+    "cloud_services": ["AWS EC2", "AWS S3", "Heroku"],
+    "tools": ["Docker", "Jenkins", "Postman", "Git"],
+    "libraries": ["Mongoose", "Axios", "Bcrypt", "Jest"],
+    "soft_skills": "N/A",
+    "tech_skills": ["RESTful APIs", "Microservices Architecture", "CI/CD Pipelines", "Database Design (SQL/NoSQL)"]
+  },
+  "certifications": "N/A"
+}
+
+
+
+Create a well defined task for the same.
+
+Now instruct the 

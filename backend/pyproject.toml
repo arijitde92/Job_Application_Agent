@@ -1,0 +1,77 @@
+[project]
+name = "job-application-agent-backend"
+version = "1.0.0"
+description = "AI-powered resume tailoring and interview preparation — FastAPI backend + CrewAI pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # ── Web framework ──────────────────────────────────────────────────────
+    # Pinned to the 0.115 line: fastapi 0.137.x has a regression where
+    # include_router() silently registers no routes in this environment.
+    # Bump only after verifying include_router works (see tests/test_health.py
+    # and the /api route count).
+    "fastapi>=0.115.0,<0.116",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.7",
+    "sse-starlette>=1.8.0",
+    # ── Database ───────────────────────────────────────────────────────────
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncmy>=0.2.9",
+    "pymysql>=1.1.0",
+    # ── Config & validation ────────────────────────────────────────────────
+    "pydantic[email]>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0.0",
+    # ── Auth ───────────────────────────────────────────────────────────────
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "google-auth>=2.25.0",
+    # ── Google Cloud ───────────────────────────────────────────────────────
+    "google-cloud-storage>=2.14.0",
+    "google-cloud-bigquery>=3.0.0",
+    # ── LLM / Agent pipeline (CrewAI) ──────────────────────────────────────
+    "crewai[anthropic]",
+    "crewai-tools[mcp]",
+    # ── RAG / embeddings ───────────────────────────────────────────────────
+    "langchain-community",
+    "langchain-google-genai",
+    "langchain-google-community[featurestore]",
+    "langchain-text-splitters",
+    # ── Document parsing & scraping ────────────────────────────────────────
+    "beautifulsoup4",
+    "openpyxl",
+    "pandas",
+    "pdfplumber",
+    "pypdf",
+    "python-docx",
+    "requests",
+]
+
+[project.scripts]
+# Custom commands — invoke from backend/ with `uv run <name>`.
+api = "app.cli:api"            # FastAPI dev server (reload)
+api-prod = "app.cli:api_prod"  # FastAPI production server (workers, no reload)
+frontend = "app.cli:frontend"  # Vite dev server (npm run dev)
+dev = "app.cli:dev"            # backend api + cloud SQL Proxy + frontend together
+db-proxy = "app.cli:db_proxy"  # Cloud SQL Auth Proxy (127.0.0.1:3306)
+crew = "app.cli:crew"          # CrewAI pipeline CLI
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# The importable package is `app/`; only it needs to be built into the wheel
+# so the [project.scripts] entrypoints resolve.
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
