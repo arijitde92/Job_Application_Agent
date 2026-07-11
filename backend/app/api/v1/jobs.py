@@ -67,6 +67,9 @@ async def tailor_resume(
             job_id=job.id, user_id=current_user.id, user_email=current_user.email,
             github_profile=github_profile, resume_gcs_path=resume.gcs_path,
             job_url=req.linkedin_job_url,
+            resume_id=resume.id,
+            user_name=f"{current_user.first_name} {current_user.last_name}",
+            resume_filename=resume.original_filename,
         )
     )
     return job
@@ -183,6 +186,9 @@ async def retry_job(
             job_id=job.id, user_id=current_user.id, user_email=current_user.email,
             github_profile=github_profile, resume_gcs_path=resume.gcs_path,
             job_url=job.linkedin_job_url,
+            resume_id=resume.id,
+            user_name=f"{current_user.first_name} {current_user.last_name}",
+            resume_filename=resume.original_filename,
         )
     )
     return job

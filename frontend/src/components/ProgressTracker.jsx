@@ -3,6 +3,7 @@ import { FiCheck, FiLoader, FiClock, FiAlertTriangle } from 'react-icons/fi';
 
 const STEPS = [
   { key: 'extracting_job_info', label: 'Extracting job information' },
+  { key: 'parsing_resume', label: 'Parsing your resume' },
   { key: 'searching_projects', label: 'Searching GitHub projects' },
   { key: 'building_profile', label: 'Building your profile' },
   { key: 'tailoring_resume', label: 'Tailoring your resume' },

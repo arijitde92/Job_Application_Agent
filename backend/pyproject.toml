@@ -41,6 +41,7 @@ dependencies = [
     "beautifulsoup4",
     "openpyxl",
     "pandas",
+    "pdfplumber",
     "pypdf",
     "python-docx",
     "requests",

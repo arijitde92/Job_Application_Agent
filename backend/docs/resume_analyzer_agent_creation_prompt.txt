@@ -1,0 +1,370 @@
+Create a new CrewAI agent called "resume_analyzer" that carefully scans and analyzes the given resume to extract all the relevant information it can find and produce them as output in the JSON format given below. It should create a file called "<user_name>_<user_id>_<resume_id>_parsed_resume.json" in local temp storage and then upload it to the GCS storage. It should store the GCS path of the uploaded file in the database table "Resume" under field "parsed_resume_path". Create this field if the current Database table does not have it. Modify "backend/app/models/__init__.py" which contains the Database table details accordingly. Also update the schema if necessary present in "backend/app/schemas/__init__.py". The agent should only write to the database if the file creation and the subsequent upload of the file to GCS is successful.
+
+Use existing tools or create new tools that this agent can use to write, upload files or update database.
+
+Create helper functions to first check the document type (.pdf, .docx or .md), then create three helper functions to extract data from each document type.
+For PDF use "PyPDF" package initially and if it fails to properly parse the document, use "pdfplumber" package. If that even fails, raise proper Error.
+For .docx type, use "python-docx" package to extract the data and implemenent proper failure resolution.
+For .md file use the file as is.
+
+If the parsing fails, the Crew should not continue further and notify the user that resume parsing failed and all related logs should be carefully written.
+The user will have the option to try again from the UI interface which is already implemented. Carefully think and create the relevant CrewAI task for the same.
+The Resume analyzing task should be done in parallel to the "github_task". Modify crew in "backend/app/services/crew/crew.py" and build_tasks in "backend/app/services/crew/tasks.py" accordingly.
+Always follow the official documentation guides while implementing CrewAI related code. You can use Context7 MCP to get latest documentation.
+
+The contents of this JSON file should be passed to the "profiler" agent. So also modify the task description of "_profile_task" and the task build order in "backend/app/services/crew/tasks.py".
+
+Create a python script in "backend/tests" to run this agent and task in isolation to check the output quality.
+Let the agent create the output file in local temp storage but it should not upload to gcs or write to database.
+It should copy the file from temp folder to an "output" folder inside "backend/tests".
+The filename should be "test_parsed_resume_<timestamp>.json" as the usual filename mentioned above cannot be used due to lack of user_name, user_id and resume_id information.
+
+Output JSON format:
+"""
+{	"id": 
+	"result": {
+		"name": "",
+		"email": "",
+		"phone": "",
+		"address": "",
+		"city": "",
+		"country": "",
+		"language": "",
+		"spoken_languages": [],
+		"honors_and_awards": [],
+		"courses_and_certifications": [],
+		"linkedin_url": "",
+		"github_url": "",
+		"twitter_url": "",
+		"website_url": "",
+		"date_of_birth": null,
+		"nationality": "",
+		"summary_objective": "",
+		"work_authorization": "",
+		"years_of_experience": 0,
+		"has_remote_work_experience": false,
+		"remote_work_type": "",
+		"has_management_experience": false,
+		"management_level": "",
+		"approximate_age": null,
+		"brief_summary": "",
+		"drivers_licenses": [],
+		"interests_hobbies": [],
+		"projects": [
+		  {
+			"project_name": "",
+			"description": "",
+			"url": ""
+		  }
+		],
+		"volunteer_experience": [],
+		"publications": [
+		  {
+			"title": "",
+			"publisher": "",
+			"date": "",
+			"url": ""
+		  }
+		],
+		"positions": [
+		  {
+			"position_name": "",
+			"company_name": "",
+			"country": "",
+			"start_date": "",
+			"end_date": null,
+			"skills": [],
+			"job_type": "",
+			"job_details": ""
+		  }
+		],
+		"education_qualifications": [
+		  {
+			"school_name": "",
+			"school_type": "",
+			"degree_type": "",
+			"faculty_department": "",
+			"specialization_subjects": "",
+			"country": "",
+			"start_date": "",
+			"end_date": "",
+			"learning_mode": "",
+			"education_details": ""
+		  }
+		]
+	}
+}
+"""
+
+Example Output:
+Source file present in "/home/arijit/Job_Application_Agent/backend/sample_data/Arijit De Resume 2026.pdf"
+"""
+{
+	"id": 2
+	"result": {
+		"name": "Arijit De",
+		"email": "arijitde2050@gmail.com",
+		"phone": "+918981800329",
+		"address": "",
+		"city": "Kolkata",
+		"country": "India",
+		"language": "",
+		"spoken_languages": [],
+		"honors_and_awards": [],
+		"courses_and_certifications": [
+		  "Deep Learning, a 5-course specialization, by Deeplearning.ai. Verify here.",
+		  "MCPS: Microsoft Certified Professional, Microsoft Certification No.: 1042C4-5DHF30"
+		],
+		"linkedin": "https://www.linkedin.com/in/de-arijit/",
+		"github": "https://github.com/arijitde92",
+		"twitter": "",
+		"website": "",
+		"date_of_birth": null,
+		"nationality": "",
+		"summary_objective": "",
+		"work_authorization": "",
+		"years_of_experience": 8,
+		"has_remote_work_experience": true,
+		"remote_work_type": "fully_remote",
+		"has_management_experience": true,
+		"management_level": "team_lead",
+		"approximate_age": null,
+		"brief_summary": "Machine Learning Engineer and Computer Vision Engineer with experience in multi-agent AI systems, RAG pipelines, MLOps, backend engineering, and 3D computer vision. Strong background in Python, PyTorch, FastAPI, cloud platforms, and applied AI research, with industry and academic experience across construction tech, neuroimaging, ADAS, and enterprise systems.",
+		"drivers_licenses": [],
+		"interests_hobbies": [],
+		"projects": [
+		  {
+			"project_name": "Doctor Appointment Scheduler",
+			"description": "Architected and deployed a scalable, production-level Multi-Agent System for appointment scheduling. Designed the Agent Orchestration and multi agent delegation and coordination using Google ADK, integrating intelligent doctor matching and calendar scheduling (task hand-off/execution). Implemented robust Tool Calling and Execution using Composio for calendar actions and Google Maps MCP. The scalable Backend Engineering architecture utilizes Google Cloud Run for containerized deployment, integrating Google Cloud SQL and Gemini Enterprise.",
+			"url": "https://doctor-appointment-app-173427564927.asia-south1.run.app/"
+		  },
+		  {
+			"project_name": "Job Application Agent",
+			"description": "Developed a real-world Multi-Agent System for automation, utilizing Crew AI for advanced workflow orchestration of specialized agents. Engineered Shared State/Memory by integrating Google BigQuery (vector store) and Vertex AI (embeddings) for consistent, scalable semantic search and storage across agents. Implemented custom tools (LinkedIn/GitHub scrapers) and leveraged LangChain for core system logic, all built in Python.",
+			"url": ""
+		  }
+		],
+		"volunteer_experience": [],
+		"publications": [
+		  {
+			"title": "Predicting Genetic Markers for Brain Tumors Using a Composite Loss",
+			"publisher": "IEEE Transactions on Computational Biology and Bioinformatics (TCBB)",
+			"date": "2025-07-01",
+			"url": ""
+		  },
+		  {
+			"title": "Shape Induced Multi-class Deep Graph Cut for Hippocampus Subfield Segmentation",
+			"publisher": "Springer, Cham",
+			"date": "2025-01-01",
+			"url": "https://doi.org/10.1007/978-3-031-78201-5_16"
+		  },
+		  {
+			"title": "3D Hippocampus Segmentation Using a Hog Based Loss Function with Majority Pooling",
+			"publisher": "2023 IEEE International Conference on Image Processing (ICIP)",
+			"date": "2023-10-01",
+			"url": ""
+		  },
+		  {
+			"title": "Brain Tumor Classification from Radiology and Histopathology using Deep Features and Graph Convolutional Network",
+			"publisher": "2022 26th International Conference on Pattern Recognition (ICPR 2022)",
+			"date": "2022-01-01",
+			"url": ""
+		  },
+		  {
+			"title": "A Deep Graph Cut Model for 3D Brain Tumor Segmentation",
+			"publisher": "44th Annual International Conference of the IEEE Engineering in Medicine & Biology Society (EMBC 2022)",
+			"date": "2022-01-01",
+			"url": ""
+		  },
+		  {
+			"title": "DTI based Alzheimer's Disease Classification with Rank Modulated Fusion of CNNs and Random Forest",
+			"publisher": "Expert Syst. Appl.",
+			"date": "2021-01-01",
+			"url": ""
+		  }
+		],
+		"references": [],
+		"positions": [
+		  {
+			"position_name": "Computer Vision Engineer",
+			"company_name": "Synerjix",
+			"country": "USA",
+			"start_date": "2025-06-01",
+			"end_date": "2025-12-01",
+			"skills": [
+			  "DinoV3",
+			  "Python",
+			  "FastAPI",
+			  "MySQL",
+			  "AWS",
+			  "Sagemaker",
+			  "EC2",
+			  "EKS",
+			  "CI/CD",
+			  "Docker"
+			],
+			"job_type": "Remote",
+			"job_details": "Smart Moving Assistant Created a Smart Moving Assistant, helping users estimate shifting cost of items using room photos. Used DinoV3 for object detection, python and FastAPI for backend development, MySQL as the Database and AWS (Sagemaker, EC2, EKS) as the deployment platform along with CI/CD and Docker. Automation improved moving estimation by 70% and improved stakeholder business efficiency by 50%."
+		  },
+		  {
+			"position_name": "Machine Learning Engineer",
+			"company_name": "mVizn Pte. Ltd.",
+			"country": "Singapore",
+			"start_date": "2024-01-01",
+			"end_date": null,
+			"skills": [
+			  "CrewAI",
+			  "Retrieval-Augmented Generation (RAG)",
+			  "Pinecone",
+			  "LoRA",
+			  "Gemini",
+			  "Python",
+			  "PyTorch",
+			  "MLflow",
+			  "FastAPI",
+			  "Pydantic",
+			  "asyncio",
+			  "ONNX",
+			  "Docker",
+			  "Google Cloud Platform (GCP)"
+			],
+			"job_type": "Remote",
+			"job_details": "Smart Property Manager Project Singapore (Remote) Developed a multi-agent platform for the construction domain using CrewAI enabling Autonomous Project Management & Scheduling (APMS), Automated Estimation & Procurement (AEP), and intelligent project information retrieval increasing overall business efficiency by 50%. Conceptualized the orchestration layer for governing through intelligent state & memory management, context propagation, and dynamic routing of user intent. Designed robust multi-agent workflows by balancing technical trade-offs and ensuring model observability, tracing and performance monitoring. Built multi-modal Retrieval-Augmented Generation (RAG) pipelines optimizing for performance and accurate retrieval with hybrid search and reranking techniques across massive datasets of text, images and CAD files leveraging multiple types of embeddings stored in Pinecone. Applied LoRA fine-tuning to adapt Gemini LLMs for domain understanding & structured output formatting. 3D Scan-to-BIM Project Led the development of a scalable end-to-end machine learning pipeline from training to deployment for 3D semantic segmentation of indoor point clouds extracted from LiDAR scans using Python and PyTorch reducing Building Information Modeling (BIM) creation time by 60%. Implemented MLflow-based experiment tracking, model versioning, model registry, and reproducible training workflows to support scalable MLOps practices. Designed and implemented scalable, robust backend architectures using FastAPI, Pydantic, asyncio and multi threaded programming. Optimized models through ONNX and deployed services using Docker and Google Cloud Platform (GCP), including Cloud Storage, Compute Engine VMs, IAM and Cloud SQL services."
+		  },
+		  {
+			"position_name": "Computer Vision Engineer",
+			"company_name": "Institute of Neurosciences",
+			"country": "India",
+			"start_date": "2022-01-01",
+			"end_date": "2023-12-01",
+			"skills": [
+			  "PyTorch",
+			  "Python",
+			  "OpenCV",
+			  "Numpy",
+			  "ETL",
+			  "Matplotlib",
+			  "Streamlit",
+			  "Docker"
+			],
+			"job_type": "Onsite",
+			"job_details": "AI Assisted Neuroimaging Kolkata, India Designed and implemented custom 3D Computer Vision solutions related to various Neurological disorders using PyTorch, Python, OpenCV and Numpy improving diagnosis speed by 40%. Created custom data processing and ingestion (ETL) pipelines for handling massive MRI, CT images. Converted raw patient data into valuable information with innovative data analysis and interactive dashboards for stakeholders using Matplotlib, Streamlit, Docker."
+		  },
+		  {
+			"position_name": "Machine Learning Engineer",
+			"company_name": "Mercedes-Benz Research and Development India",
+			"country": "India",
+			"start_date": "2018-08-01",
+			"end_date": "2019-08-01",
+			"skills": [
+			  "Computer Vision",
+			  "YOLOv3",
+			  "AWS",
+			  "Python",
+			  "QA"
+			],
+			"job_type": "Onsite",
+			"job_details": "Advanced driver-assistance system (ADAS) Bengaluru, India Developed and optimized a computer vision pipeline for Vulnerable Road User (VRU) detection using YOLOv3 and large-scale annotated datasets. Designed & deployed model training, evaluation, and validation workflows in AWS. Built automated quality assurance (QA) and evaluation frameworks using Python, improving annotation throughput by 20% and data quality by 25%."
+		  },
+		  {
+			"position_name": "Systems Engineer",
+			"company_name": "Tata Consultancy Services",
+			"country": "India",
+			"start_date": "2014-08-01",
+			"end_date": "2015-08-01",
+			"skills": [
+			  "Java",
+			  "MySQL"
+			],
+			"job_type": "Onsite",
+			"job_details": "Ultimatix Team Kolkata, India Maintained and enhanced high-availability backend systems (Java, MySQL) for TCS’s internal website, ensuring seamless functionality for over 100,000 users. Streamlined feature release cycle, reducing deployment time by 20%."
+		  }
+		],
+		"education_qualifications": [
+		  {
+			"school_name": "Jadavpur University",
+			"school_type": "University or equivalent",
+			"degree_type": "Doctorate/PhD or equivalent",
+			"faculty_department": "",
+			"specialization_subjects": "",
+			"country": "India",
+			"start_date": "2019-01-01",
+			"end_date": "2024-01-01",
+			"learning_mode": "In-person learning",
+			"education_details": "PhD, Jadavpur University, Kolkata, India."
+		  },
+		  {
+			"school_name": "Jadavpur University",
+			"school_type": "University or equivalent",
+			"degree_type": "Master's Degree or equivalent",
+			"faculty_department": "",
+			"specialization_subjects": "Computer Science & Engineering",
+			"country": "India",
+			"start_date": "2016-01-01",
+			"end_date": "2018-01-01",
+			"learning_mode": "In-person learning",
+			"education_details": "M.Tech. Computer Science & Engineering, Jadavpur University, Kolkata, India. GPA - 8.83"
+		  },
+		  {
+			"school_name": "Techno India",
+			"school_type": "College or equivalent",
+			"degree_type": "Bachelor's Degree or equivalent",
+			"faculty_department": "",
+			"specialization_subjects": "Computer Science & Engineering",
+			"country": "India",
+			"start_date": "2010-01-01",
+			"end_date": "2014-01-01",
+			"learning_mode": "In-person learning",
+			"education_details": "B.Tech. Computer Science & Engineering, Techno India, Kolkata, India. GPA - 8.81"
+		  }
+		]
+	}
+}
+"""
+
+Modify "PARSED_RESUME_SCHEMA" to add a skills key after "positions". It should be like a dictionary with skills category as the keys based on the categories given in the resume. If there are no categories, then it should have a "default" category. The skills should a list of strings for each category.
+Below are three examples - 
+
+1. Extracted text:
+"""
+Languages:	Python, C++, SQL  
+LLM/Agent Systems: 	Multi Agent Orchestration (Crew AI, Google ADK, LangGraph), Agentic Memory,
+					LangChain, LLM, APIs (OpenAI, Gemini, Claude), DeepEval  
+Frameworks / Libraries:	FastAPI, Flask, PyTorch, Scikit-learn, OpenCV, Open3D, PyTest,   
+Cloud & Ops:	Google Cloud Platform (GCP), Amazon Web Services (AWS), Git, Docker,  
+	MLFlow, Github Actions
+"""
+
+Desired skill section:
+"skills":{
+	"Languages": ["Python", "C++", "SQL"],
+	"LLM/Agent Systems": ["Crew AI", "Google ADK", "LangGraph", "Agentic Memory", "LangChain", "LLM", "OpenAI", "Gemini", "Claude", "DeepEval"],
+	"Frameworks / Libraries": ["FastAPI", "Flask", "Pytorch", "Scikit-learn", "OpenCV", "Open3D", "PyTest"],
+	"Cloud & Ops": ["Google Cloud Platform (GCP)", "Amazon Web Services (AWS)", "Git", "Docker", "MLFlow", "Github Actions"]
+}
+
+2. Extracted Text:
+"""
+Programming: Python, C, C++, SQL, Core Java
+Tools & Technologies: TensorFlow, PyTorch, Scikit-learn, NumPy, Pandas, Matplotlib, Seaborn, NLTK, spaCy, Transformers, Git, Docker, Linux, PostgreSQL, Elasticsearch, GitHub Actions, Azure, DigitalOcean
+"""
+
+Desired skill section:
+"skills":{
+	"Programming": ["Python", "C", "C++", "SQL", "Core Java"],
+	"Tools & Technologies": ["TensorFlow", "PyTorch", "Scikit-learn", "NumPy", "Pandas", "Matplotlib", "Seaborn", "NLTK", "spaCy", "Transformers", "Git", "Docker", "Linux", "PostgreSQL", "Elasticsearch", "GitHub Actions", "Azure", "DigitalOcean"]
+}
+
+3. Extracted Text:
+"""
+Python, HTML, CSS, JavaScript, React, Node.js, AWS, GCP
+"""
+
+Desired skill section:
+"skills":{
+	"Default": ["Python", "HTML", "CSS", "JavaScript", "React", "Node.js", "AWS", "GCP"]
+}
+
+Also Modify "_resume_analysis_task" and "resume_analyzer" descriptions if necessary.
+
+Also apply a guardrail to make sure Agent does not hallucinate. See the documentation given by CrewAI here - "https://docs.crewai.com/v1.15.1/en/enterprise/features/hallucination-guardrail.md"

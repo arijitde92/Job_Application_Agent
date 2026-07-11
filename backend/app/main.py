@@ -26,6 +26,23 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+        # Lightweight migration: create_all only creates missing tables, it
+        # never alters existing ones. Add resumes.parsed_resume_path (written
+        # by the resume_analyzer agent) if the column is missing. Idempotent
+        # and best-effort, same policy as the cleanup below.
+        try:
+            def _add_parsed_resume_column(sync_conn):
+                from sqlalchemy import inspect, text
+                columns = {c["name"] for c in inspect(sync_conn).get_columns("resumes")}
+                if "parsed_resume_path" not in columns:
+                    sync_conn.execute(text(
+                        "ALTER TABLE resumes ADD COLUMN parsed_resume_path VARCHAR(500) NULL"
+                    ))
+                    logger.info("Added resumes.parsed_resume_path column")
+            await conn.run_sync(_add_parsed_resume_column)
+        except Exception as exc:  # noqa: BLE001 — never let migration break startup
+            logger.warning("Startup parsed_resume_path migration skipped: %s", exc)
+
         # Best-effort: fail jobs left pending/processing for >3h (orphaned by a
         # prior restart). Reuses THIS connection — no new session/checkout — and
         # swallows all errors so it can never abort startup or kill the proxy.

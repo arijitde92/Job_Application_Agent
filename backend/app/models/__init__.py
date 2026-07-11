@@ -64,7 +64,11 @@ class Resume(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     original_filename = Column(String(255), nullable=False)
-    gcs_path = Column(String(500), nullable=False)  # gs://bucket/uploads/<user_id>/<filename>.md
+    gcs_path = Column(String(500), nullable=False)  # gs://bucket/uploads/<user_id>/<filename>
+    # gs://bucket/parsed/<user_id>/<name>_<user_id>_<resume_id>_parsed_resume.json
+    # Set by the resume_analyzer agent only after the JSON is written and
+    # uploaded to GCS successfully.
+    parsed_resume_path = Column(String(500), nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
