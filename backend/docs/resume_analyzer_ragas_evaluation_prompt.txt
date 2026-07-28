@@ -1,0 +1,17 @@
+I want to setup an evaluation pipeline for the resume_analyzer agent using the ragas framework (https://docs.ragas.io/en/stable/).
+I want to test the following metrics - 
+1. answer_correctness (https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/answer_correctness/)
+2. answer_relevancy (https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/answer_relevance/)
+3. faithfullness (https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/faithfulness/)
+
+Apart from the documentation links given above, following are some useful documentation links - 
+1. Evaluate and improve a RAG (https://docs.ragas.io/en/stable/howtos/applications/evaluate-and-improve-rag/)
+2. Experimentation (https://docs.ragas.io/en/stable/concepts/experimentation/)
+3. Datasets (https://docs.ragas.io/en/stable/concepts/datasets/)
+
+Carefully go through the documentation and create an implementation plan. You can also search the internet and use Context7 to get other relevant documentation that you need.
+The metrics should be tested on the agents json output. I think the context should be the input parsed resume itself and the question is the task prompt.
+Create a seperate directory called "resume_analyzer" under "backend" with this path "backend/golden_dataset/agents/resume_analyzer" to store the golden dataset for testing this agent.
+I want a seperate directory called resume_analyzer with this path "backend/tests/ragas/agents/resume_analyzer" inside which the test results should be written based on the dataset version.
+
+Tell me what I need to provide from my end (For example, dataset query, ground truth, etc.)

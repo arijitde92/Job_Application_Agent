@@ -12,6 +12,7 @@ from app.services.crew.agents import (
 )
 from app.services.crew.resume_tools import (
     ResumeAnalysisContext,
+    calculate_yoe,
     make_save_parsed_resume_tool,
     make_parsed_resume_guardrail,
 )
@@ -103,7 +104,14 @@ def _resume_analysis_task(ctx: ResumeAnalysisContext, *, run_async: bool = True)
             "  - Dates use the YYYY-MM-DD format. When the resume gives only a month "
             "or year, use the first day of that month/year. A position's end_date is "
             "null when it is the applicant's current job.\n"
+            "Carefully derive the accurate date format. Some may be MM/DD/YYYY or MM-DD-YYYY, some may be DD/MM/YYYY or DD-MM-YYYY, and some may be Month YYYY. Do NOT guess or invent dates.\n"
+            "Always store the date in YYYY-MM-DD format.\n"
             "  - Do NOT invent, guess, or embellish anything that is not in the resume.\n"
+            "  - Do NOT copy any text from the resume into the JSON that is not a direct value for a key. For example, do NOT copy a position description into the brief_summary field.\n"
+            "  - Do NOT include internship experience in the parsed resume JSON if the candidate has more than one year of professional experience.\n"
+            "  - Do NOT include teaching position experience in the parsed resume JSON if the candidate has more than one technical position for more than one year.\n"
+            "  - Do NOT include any other position or experience like school or college position of responsibilities, volunteering, or non-technical positions in the parsed resume JSON if the candidate has more than one year of technical professional experience.\n"
+            "  - Only consider a certificate or course if it has a valid certifier or issuing organization. Do NOT include any certificate or course that does not have a valid issuer.\n"
             "  - Every *_url field (linkedin_url, github_url, twitter_url, "
             "website_url, kaggle_url) MUST be a complete, valid URL — it must start "
             "with 'http://' or 'https://' and contain a domain (e.g. "
@@ -113,14 +121,13 @@ def _resume_analysis_task(ctx: ResumeAnalysisContext, *, run_async: bool = True)
             "can only see such link text and NOT the actual URL, leave that field "
             "as an empty string \"\". NEVER put link labels, names, or partial "
             "fragments in a URL field.\n"
-            "  - For years_of_experience: if the summary/objective explicitly states "
-            "a number of years of professional experience (e.g. 'over 2 years of "
-            "experience'), use that number (rounded down to a whole number). "
-            "Otherwise leave years_of_experience as 0 — it will be computed from the "
-            "position dates automatically; do NOT estimate it yourself.\n"
+            "  - Leave years_of_experience as 0 for now — you will fill it in Step 3 "
+            "with the calculate_yoe tool. NEVER estimate, count, or add up the years "
+            "yourself, and do NOT copy a number stated in the summary/objective.\n"
             "  - Derive has_remote_work_experience, remote_work_type, "
             "has_management_experience and management_level from the positions and "
             "their descriptions.\n"
+            "  - If the country is not explicitly specified in a position or education entry, derive the country from the location information. If you are still not sure then leave it as \"\".\n"
             "  - Write a concise 2-4 sentence brief_summary of the applicant.\n"
             "  - \"skills\" is a dictionary. If the resume groups its skills under "
             "category headings (e.g. \"Languages\", \"Frameworks / Libraries\", "
@@ -141,10 +148,32 @@ def _resume_analysis_task(ctx: ResumeAnalysisContext, *, run_async: bool = True)
             "      Resume text: 'Python, HTML, CSS, JavaScript, React, AWS' -> "
             "\"skills\": {\"Default\": [\"Python\", \"HTML\", \"CSS\", "
             "\"JavaScript\", \"React\", \"AWS\"]}\n"
+            "  - For position related skills, only include skills that are explicitly mentioned in the "
+            "position description. Do not invent or assume any skills.\n"
             "  - The JSON must be strictly valid: no comments, no trailing commas, "
             "no markdown fences.\n\n"
-            "Step 3 — MANDATORY FINAL STEP:\n"
-            "  Call the save_parsed_resume tool with the COMPLETE JSON string. If it "
+            "Step 3 — MANDATORY: calculate the years of experience:\n"
+            "  Call the calculate_yoe tool ONCE, passing the (start_date, end_date) "
+            "pair of EVERY position you extracted in Step 2 as a list of pairs, in "
+            "the same YYYY-MM-DD format you put in the JSON — for example:\n"
+            "    calculate_yoe(date_ranges=[[\"2019-06-01\", \"2021-08-31\"], "
+            "[\"2021-09-15\", null]])\n"
+            "  Pass the end_date as null for the applicant's CURRENT position (the "
+            "tool substitutes today's date for it); every other position must carry "
+            "its real end_date, and at most one pair may have a null end_date. Pass "
+            "ONLY professional positions — never education, project, or certification "
+            "dates — pass each position exactly once, and keep them in the same order "
+            "as the \"positions\" list in your JSON (the tool counts a month shared by "
+            "two neighbouring positions only once).\n"
+            "  Put the number the tool returns into the \"years_of_experience\" key "
+            "of the JSON, exactly as returned (it is a decimal, e.g. 2.4 = 2 years "
+            "and 4 months). Never compute or estimate this number yourself. If the "
+            "tool reports an error, it tells you which pair is wrong — fix that pair "
+            "and call it again. If the applicant has no professional positions at "
+            "all, skip the tool and leave years_of_experience as 0.\n\n"
+            "Step 4 — MANDATORY FINAL STEP:\n"
+            "  Call the save_parsed_resume tool with the COMPLETE JSON string, "
+            "including the years_of_experience value from Step 3. If it "
             "returns an ERROR, fix the reported problem and call it again with the "
             "corrected JSON. Only after it returns SUCCESS, output that same JSON as "
             "your final answer."
@@ -153,7 +182,7 @@ def _resume_analysis_task(ctx: ResumeAnalysisContext, *, run_async: bool = True)
             "The complete parsed-resume JSON document, exactly as successfully "
             "persisted via the save_parsed_resume tool."
         ),
-        tools=[read_resume, make_save_parsed_resume_tool(ctx)],
+        tools=[read_resume, calculate_yoe, make_save_parsed_resume_tool(ctx)],
         agent=resume_analyzer,
         async_execution=run_async,
         guardrail=make_parsed_resume_guardrail(ctx),

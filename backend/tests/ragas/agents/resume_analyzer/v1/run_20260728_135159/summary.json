@@ -1,0 +1,23 @@
+{
+  "agent": "resume_analyzer",
+  "dataset_version": "v1",
+  "run": "run_20260728_135159",
+  "timestamp": "2026-07-28T13:57:19",
+  "num_samples": 1,
+  "sample_ids": [
+    "anugya_srivastava"
+  ],
+  "unverified_ground_truths": [
+    "anugya_srivastava"
+  ],
+  "metric_means": {
+    "faithfulness": 0.9792,
+    "answer_relevancy": 0.7077,
+    "answer_correctness": 0.9558
+  },
+  "nan_counts": {
+    "faithfulness": 0,
+    "answer_relevancy": 0,
+    "answer_correctness": 0
+  }
+}

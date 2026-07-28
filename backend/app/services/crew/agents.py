@@ -23,16 +23,30 @@ logger = get_logger(__name__)
 gemini_llm = LLM(
     model="gemini/gemini-2.5-flash",
     api_key=os.environ.get("GEMINI_API_KEY"),
-    temperature=0.7,
+    temperature=0.5,
     max_tokens=8000
 )
 
-# Low-temperature variant for structured extraction (resume_analyzer): the
+# Structured-extraction LLM (resume_analyzer): Anthropic Claude Sonnet 5. The
 # parsed-resume JSON must be reproduced verbatim and can exceed 8k tokens.
-gemini_llm_extraction = LLM(
-    model="gemini/gemini-2.5-flash",
-    api_key=os.environ.get("GEMINI_API_KEY"),
-    temperature=0.1,
+#
+# Three things about this config are load-bearing:
+#   - The "anthropic/" prefix is REQUIRED. It routes CrewAI to its native
+#     Anthropic client (which strips the prefix before calling the API). A bare
+#     "claude-sonnet-5" falls through to CrewAI's OpenAI-compatible provider
+#     instead, which cannot talk to Anthropic.
+#   - No temperature / top_p. Claude Sonnet 5 rejects non-default sampling
+#     parameters with a 400; CrewAI only sends them when they are set, so they
+#     are omitted here. Extraction determinism comes from the task prompt and
+#     the save-tool schema validation instead.
+#   - No thinking config. Sonnet 5 runs adaptive thinking by default when the
+#     field is absent, which is what we want. Do NOT add CrewAI's
+#     thinking={"type": "enabled", "budget_tokens": N} — the fixed-budget form
+#     was removed on Sonnet 5 and returns a 400. Note that max_tokens now caps
+#     thinking + response together.
+claude_llm_extraction = LLM(
+    model="anthropic/claude-sonnet-5",
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
     max_tokens=16000
 )
 
@@ -188,9 +202,11 @@ resume_analyzer = Agent(
     role="Resume Analyzer",
     goal=(
         "Carefully scan a resume and extract every piece of relevant applicant "
-        "information into a strictly valid JSON document matching the required schema."
+        "information into a strictly valid JSON document matching the required "
+        "schema, using the calculate_yoe tool to derive the applicant's total "
+        "years of experience from their position dates."
     ),
-    llm=gemini_llm_extraction,
+    llm=claude_llm_extraction,
     verbose=True,
     max_iter=8,
     max_rpm=10,
@@ -204,6 +220,13 @@ resume_analyzer = Agent(
         "empty list, or false, exactly as the schema prescribes. When the resume "
         "groups skills under category headings you preserve those headings verbatim; "
         "when it does not, you place the skills under a single \"Default\" category. "
+        "You never do date arithmetic in your head: once you have every position's "
+        "start_date and end_date, you call the calculate_yoe tool once with all of "
+        "those (start_date, end_date) pairs — passing null as the end_date of the "
+        "applicant's current position, for which the tool substitutes today's date — "
+        "and you copy the decimal number it returns straight into the "
+        "\"years_of_experience\" field. If the tool reports a problem with one of "
+        "the pairs, you correct that pair and call it again. "
         "You always produce strictly valid JSON — no comments, no trailing commas, "
         "no markdown fences — and you always persist your work with the "
         "save_parsed_resume tool before finishing."

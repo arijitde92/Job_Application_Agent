@@ -1,0 +1,18 @@
+{
+  "agent": "resume_analyzer",
+  "dataset_version": "v1",
+  "metrics": [
+    "faithfulness",
+    "answer_relevancy",
+    "answer_correctness"
+  ],
+  "judge_model": "gemini-2.5-flash",
+  "embedding_model": "models/gemini-embedding-001",
+  "agent_model": "claude-sonnet-5",
+  "verbalizer_id": "resume-verbalizer-v1",
+  "manifest_verbalizer_id": "resume-verbalizer-v1",
+  "answers_from": null,
+  "max_workers": 4,
+  "git_commit": "5e4f03e5b7e2eff4eb8408fb3bf4d1c50c973edb",
+  "limit": 1
+}

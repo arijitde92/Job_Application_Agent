@@ -36,7 +36,10 @@ backend/
 │   └── main.py                 # FastAPI app init, CORS, router registration
 ├── credentials/                # GCP service-account / OAuth JSON (gitignored)
 ├── sample_data/                # Example resume & interview output
+├── golden_dataset/
+│   └── agents/resume_analyzer/ # Golden dataset for RAGAS eval (versioned: v1/, ...)
 ├── tests/                      # Pytest suite
+│   └── ragas/                  # RAGAS eval harness + run results (see below)
 ├── pyproject.toml              # Dependencies (managed by uv)
 ├── Dockerfile                  # (intentionally empty for now)
 └── .env.example                # Copy to .env and fill in
@@ -102,3 +105,53 @@ uv run crew \
 cd backend
 uv run pytest
 ```
+
+## RAGAS evaluation (resume_analyzer)
+
+Scores the `resume_analyzer` agent's JSON output against a hand-verified golden
+dataset on three metrics: **faithfulness**, **answer_relevancy**,
+**answer_correctness**. Design and details:
+[docs/resume_analyzer_ragas_evaluation_plan.md](docs/resume_analyzer_ragas_evaluation_plan.md).
+
+**Prerequisites** (in `backend/.env`):
+
+- `ANTHROPIC_API_KEY` — the agent under test runs on Claude
+  (skippable with `--answers-from`, see below)
+- `GEMINI_API_KEY` — the RAGAS judge LLM + embeddings run on Gemini
+
+**1. Check / curate the golden dataset** (`golden_dataset/agents/resume_analyzer/v1/`).
+Each sample dir holds `context.txt` (extracted resume text), `ground_truth.json`
+(hand-verified `ParsedResume` JSON) and `meta.json`. Hand-check every
+`ground_truth.json` field against the resume, then set `"verified": true` in its
+`meta.json` — the runner warns when it scores unverified ground truths.
+
+**2. Run the evaluation** (from `backend/`):
+
+```bash
+# Full run: all samples — runs the agent live, then scores (~15-30 min)
+uv run python -m tests.ragas.agents.resume_analyzer.run_eval --version v1
+
+# Smoke run: first sample only
+uv run python -m tests.ragas.agents.resume_analyzer.run_eval --version v1 --limit 1
+
+# Re-score cached answers from a previous run (no agent runs, no ANTHROPIC key)
+uv run python -m tests.ragas.agents.resume_analyzer.run_eval --version v1 \
+    --answers-from tests/ragas/agents/resume_analyzer/v1/run_<timestamp>
+```
+
+**3. Read the results** in
+`tests/ragas/agents/resume_analyzer/<version>/run_<timestamp>/`:
+
+| File              | Contents                                              | Git |
+| ----------------- | ----------------------------------------------------- | --- |
+| `summary.json`    | Per-metric means, sample list, NaN counts             | tracked |
+| `run_config.json` | Models, verbalizer id, git commit — reproducibility   | tracked |
+| `scores.csv`      | Per-sample per-metric scores                          | ignored |
+| `answers/*.json`  | The raw agent outputs that were scored                | ignored |
+
+**Adding a sample:** drop the resume into `sample_data/`, add it to `SOURCES` in
+`tests/ragas/agents/resume_analyzer/bootstrap_dataset.py`, run
+`uv run python -m tests.ragas.agents.resume_analyzer.bootstrap_dataset --version v1`
+(regenerates `context.txt`/`manifest.json`; never overwrites existing ground
+truths), then hand-verify the new `ground_truth.json`. Bump to `v2/` when
+changing an existing dataset version's samples or ground truths.

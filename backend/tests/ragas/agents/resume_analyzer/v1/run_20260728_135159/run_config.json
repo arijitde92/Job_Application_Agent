@@ -1,0 +1,19 @@
+{
+  "agent": "resume_analyzer",
+  "dataset_version": "v1",
+  "metrics": [
+    "faithfulness",
+    "answer_relevancy",
+    "answer_correctness"
+  ],
+  "judge_model": "gemini-2.5-flash",
+  "embedding_model": "models/gemini-embedding-001",
+  "agent_model": "claude-sonnet-5",
+  "verbalizer_id": "resume-verbalizer-v1",
+  "manifest_verbalizer_id": "resume-verbalizer-v1",
+  "answers_from": "/home/arijit/Job_Application_Agent/backend/tests/ragas/agents/resume_analyzer/v1/run_20260728_133136",
+  "max_workers": 4,
+  "job_timeout_seconds": 600,
+  "git_commit": "5e4f03e5b7e2eff4eb8408fb3bf4d1c50c973edb",
+  "limit": 1
+}

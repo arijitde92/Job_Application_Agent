@@ -184,3 +184,8 @@ project-*.json
 backend/credentials/
 **:Zone.Identifier
 backend/tests/output/
+# RAGAS eval runs: keep summary.json + run_config.json (history), ignore bulk
+backend/tests/ragas/agents/*/v*/run_*/answers/
+backend/tests/ragas/agents/*/v*/run_*/scores.csv
+sample_data/
+golden_dataset/

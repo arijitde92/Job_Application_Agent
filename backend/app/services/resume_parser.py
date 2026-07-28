@@ -271,7 +271,9 @@ class ParsedResumeResult(BaseModel):
     nationality: str = ""
     summary_objective: str = ""
     work_authorization: str = ""
-    years_of_experience: int = 0
+    # Float, not int: the resume_analyzer fills this from the calculate_yoe
+    # tool, which returns years to one decimal place (2.4 = 2 years 4 months).
+    years_of_experience: float = 0.0
     has_remote_work_experience: bool = False
     remote_work_type: str = ""
     has_management_experience: bool = False
@@ -396,7 +398,7 @@ PARSED_RESUME_SCHEMA: str = """{
     "nationality": "",
     "summary_objective": "",
     "work_authorization": "",
-    "years_of_experience": 0,
+    "years_of_experience": 0.0,
     "has_remote_work_experience": false,
     "remote_work_type": "",
     "has_management_experience": false,

@@ -19,12 +19,22 @@ CrewAI converts tool exceptions into error messages fed back to the LLM, so
 this tool never relies on raising: every failure returns an "ERROR: ..."
 string the agent can react to, and the task guardrail aborts the crew if no
 successful save happened after the retry budget.
+
+``calculate_yoe`` is the other half of this module: a stateless, module-level
+tool (no per-run identity to closure, so no factory) that turns the positions'
+(start_date, end_date) pairs into the ``years_of_experience`` value. It is the
+one place that arithmetic happens — the agent is told never to estimate the
+number itself. Unlike the save tool it *raises* on bad input: CrewAI turns the
+exception into an error message and lets the agent retry with corrected dates.
 """
 
 import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from itertools import pairwise
 from typing import Any, Callable, Dict
 
 from crewai import TaskOutput
@@ -66,6 +76,289 @@ def _strip_code_fences(text: str) -> str:
         if stripped.rstrip().endswith("```"):
             stripped = stripped.rstrip()[:-3]
     return stripped.strip()
+
+
+# ---------------------------------------------------------------------------
+# calculate_yoe — total years of experience from position date ranges
+# ---------------------------------------------------------------------------
+
+# Calendar constants for the days -> (years, months) conversion. One year is
+# 365 days and one month is 365/12 (~30.44) days, so the leftover days of an
+# incomplete month are rounded off (dropped) instead of inflating the total.
+_DAYS_PER_YEAR = 365
+_DAYS_PER_MONTH = _DAYS_PER_YEAR / 12
+
+# Date formats accepted for a start/end date. The canonical format is
+# YYYY-MM-DD; the others are tolerated because they are unambiguous (the year
+# always comes first) and a partial date resolves to the first day of the
+# stated month/year. Ambiguous forms such as 01/02/2020 are rejected — the
+# agent must resolve day-vs-month itself before calling the tool.
+_ACCEPTED_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m", "%Y/%m", "%Y")
+
+# A date that parses cleanly can still be nonsense (a mis-read "2O19" -> 0219,
+# a page number picked up as a year). No employment date predates this year.
+_EARLIEST_PLAUSIBLE_YEAR = 1900
+
+# end_date values that mean "this is the applicant's current position". The
+# schema uses null, but LLMs frequently emit one of these strings instead.
+_CURRENT_END_DATE_TOKENS = {"", "none", "null", "present", "current", "ongoing", "n/a", "na"}
+
+_DATE_RANGES_EXAMPLE = '[["2019-06-01", "2021-08-31"], ["2021-09-15", null]]'
+
+
+def _as_range_list(date_ranges: Any) -> list:
+    """Return ``date_ranges`` as a list, JSON-decoding a stringified argument."""
+    if isinstance(date_ranges, str):
+        try:
+            date_ranges = json.loads(date_ranges)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "date_ranges was passed as a string that is not valid JSON "
+                f"({e}). Pass a JSON array of [start_date, end_date] pairs, e.g. "
+                f"{_DATE_RANGES_EXAMPLE}."
+            ) from e
+    if isinstance(date_ranges, tuple):
+        date_ranges = list(date_ranges)
+    if not isinstance(date_ranges, list):
+        raise TypeError(
+            f"date_ranges must be a list of [start_date, end_date] pairs, got "
+            f"{type(date_ranges).__name__} ({date_ranges!r}). Example: "
+            f"{_DATE_RANGES_EXAMPLE}."
+        )
+    return date_ranges
+
+
+def _as_date_pair(entry: Any, position: int) -> tuple:
+    """Validate one list/tuple entry and return it as a 2-item tuple."""
+    if isinstance(entry, (str, bytes)) or not isinstance(entry, (list, tuple)):
+        raise TypeError(
+            f"Entry {position} of date_ranges must be a [start_date, end_date] pair, "
+            f"got {type(entry).__name__} ({entry!r}). Every entry — even for a single "
+            f"position — must be its own two-item pair, e.g. {_DATE_RANGES_EXAMPLE}."
+        )
+    pair = tuple(entry)
+    if len(pair) != 2:
+        raise ValueError(
+            f"Entry {position} of date_ranges has {len(pair)} value(s) ({pair!r}) but "
+            "must have EXACTLY 2: (start_date, end_date). Use null as the end_date of "
+            "a current position; never omit it and never add extra values."
+        )
+    return pair
+
+
+def _parse_position_date(value: Any, position: int, field_name: str, today: date) -> date:
+    """
+    Parse one start/end date string into a ``date``.
+
+    Rejects anything that is not a real calendar date in an accepted format
+    (so 2021-02-30, "March 2021" and ambiguous 31/08/2021 all fail), and then
+    rejects dates that parse fine but cannot describe a real position — a year
+    before 1900 or a date in the future — because those are misread resume text
+    rather than genuine employment dates.
+    """
+    if not isinstance(value, str):
+        raise TypeError(
+            f"The {field_name} of entry {position} must be a date string in "
+            f"YYYY-MM-DD format, got {type(value).__name__} ({value!r}). Quote the "
+            'date, e.g. "2021-08-31".'
+        )
+    # Tolerate an ISO datetime by keeping only the date part.
+    text = re.split(r"[T ]", value.strip(), maxsplit=1)[0]
+    parsed: date | None = None
+    for fmt in _ACCEPTED_DATE_FORMATS:
+        try:
+            parsed = datetime.strptime(text, fmt).date()
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        raise ValueError(
+            f"The {field_name} of entry {position} ({value!r}) is not a valid date. "
+            "Use the YYYY-MM-DD format (e.g. \"2021-08-31\"); when the resume gives "
+            "only a month or a year, use the first day of it (\"2021-08\" -> "
+            "\"2021-08-01\"). Day-first or month-first formats like 31/08/2021 are "
+            "ambiguous and are not accepted — convert the date yourself before "
+            "calling the tool."
+        )
+
+    if parsed.year < _EARLIEST_PLAUSIBLE_YEAR:
+        raise ValueError(
+            f"The {field_name} of entry {position} ({value!r}) resolves to "
+            f"{parsed.isoformat()}, which is before {_EARLIEST_PLAUSIBLE_YEAR} and "
+            "cannot be a real employment date. Re-read that date from the resume — "
+            "the year was most likely misread — and call the tool again."
+        )
+    if parsed > today:
+        raise ValueError(
+            f"The {field_name} of entry {position} ({value!r}) resolves to "
+            f"{parsed.isoformat()}, which is in the future (today is "
+            f"{today.isoformat()}). Positions cannot start or end in the future: "
+            "re-read that date from the resume, and use null as the end_date if the "
+            "position is the applicant's current one."
+        )
+    return parsed
+
+
+def _is_same_month(first: date, second: date) -> bool:
+    """True when two dates fall in the same calendar month of the same year."""
+    return (first.year, first.month) == (second.year, second.month)
+
+
+def _count_shared_months(spans: list[tuple[date, date]]) -> int:
+    """
+    Count the month boundaries shared by neighbouring positions.
+
+    When one position ends in the same calendar month that the next one starts
+    (e.g. ...-> 2020-01-01 followed by 2020-01-01 -> ...), that month is inside
+    both spans and would otherwise be counted twice. One month is discounted
+    per occurrence.
+
+    Resumes list positions newest-first as often as oldest-first, so each
+    neighbouring pair is checked in both directions; a pair can only ever
+    contribute a single discounted month.
+    """
+    return sum(
+        1
+        for (start_a, end_a), (start_b, end_b) in pairwise(spans)
+        if _is_same_month(end_a, start_b) or _is_same_month(end_b, start_a)
+    )
+
+
+def _calculate_yoe(date_ranges: Any, today: date | None = None) -> float:
+    """
+    Pure implementation behind the ``calculate_yoe`` tool.
+
+    Sums the day spans of every (start_date, end_date) pair, converts the total
+    into whole years plus whole months (dropping the leftover days), discounts
+    one month for every calendar month shared by two neighbouring positions,
+    and returns ``years + months / 12`` rounded to one decimal place.
+
+    ``today`` overrides the current date used for an open-ended (null) end_date;
+    it exists so tests are deterministic.
+    """
+    today = today or date.today()
+    entries = _as_range_list(date_ranges)
+    if not entries:
+        return 0.0
+
+    spans: list[tuple[date, date]] = []
+    open_ended_positions: list[int] = []
+
+    for index, entry in enumerate(entries, start=1):
+        start_raw, end_raw = _as_date_pair(entry, index)
+
+        if start_raw is None or (isinstance(start_raw, str) and not start_raw.strip()):
+            raise ValueError(
+                f"The start_date of entry {index} is missing ({start_raw!r}). Every "
+                "position MUST have a start_date — only the end_date may be null. "
+                "Re-read the resume for that position's start date and call the tool "
+                "again."
+            )
+
+        start = _parse_position_date(start_raw, index, "start_date", today)
+
+        # A null / blank / "Present" end_date means the position is current.
+        is_open_ended = end_raw is None or (
+            isinstance(end_raw, str)
+            and end_raw.strip().lower() in _CURRENT_END_DATE_TOKENS
+        )
+        if is_open_ended:
+            open_ended_positions.append(index)
+            end = today
+        else:
+            end = _parse_position_date(end_raw, index, "end_date", today)
+
+        if end < start:
+            raise ValueError(
+                f"Entry {index} ends before it starts: start_date {start.isoformat()} "
+                f"is after end_date {end.isoformat()}"
+                + (" (today, used because the end_date is null)" if is_open_ended else "")
+                + ". Check that the two dates are in the right order and that neither "
+                "was misread from the resume."
+            )
+
+        spans.append((start, end))
+
+    if len(open_ended_positions) > 1:
+        raise ValueError(
+            f"{len(open_ended_positions)} entries have a null end_date (entries "
+            f"{', '.join(str(i) for i in open_ended_positions)}), but only ONE "
+            "position can be the applicant's current job. Give every past position "
+            "its real end_date from the resume and leave the end_date null for at "
+            "most one position."
+        )
+
+    total_days = sum((end - start).days for start, end in spans)
+    years = int(total_days // _DAYS_PER_YEAR)
+    leftover_days = total_days - years * _DAYS_PER_YEAR
+    months = int(leftover_days // _DAYS_PER_MONTH)
+
+    # years + months / 12 == (years * 12 + months) / 12, so working in whole
+    # months lets the shared-month discount borrow from the years cleanly.
+    shared_months = _count_shared_months(spans)
+    if shared_months:
+        logger.info(
+            "resume_tools: calculate_yoe discounted %d month(s) shared by "
+            "neighbouring positions", shared_months,
+        )
+    whole_months = max(years * 12 + months - shared_months, 0)
+    return round(whole_months / 12, 1)
+
+
+# NOTE: the parameter is annotated as a bare ``list`` on purpose. CrewAI turns
+# the annotation into the JSON schema Gemini sees ({"type": "array"}), which is
+# enough for the model to emit an array, while leaving the *elements* untyped so
+# every element-level problem (wrong type, malformed pair, bad date format) is
+# reported by the curated messages below instead of a generic pydantic error.
+@tool("calculate_yoe")
+def calculate_yoe(date_ranges: list) -> float:
+    """
+    Calculate an applicant's TOTAL years of professional work experience from the
+    start and end dates of the positions listed on their resume.
+
+    WHEN TO USE THIS TOOL: use it whenever you need a "years_of_experience"
+    value. Call it exactly once, after you have extracted the start_date and
+    end_date of every professional position and before you save the parsed
+    resume, then put the returned number in "years_of_experience". Never
+    estimate, add up, or guess the years of experience yourself — this tool is
+    the only correct way to compute it. Do NOT call it when the applicant has no
+    work positions at all (the answer is simply 0), and do NOT pass education,
+    project, or certification dates — only paid/professional positions.
+
+    Args:
+        date_ranges (list): A list of (start_date, end_date) pairs, one pair per
+            position, e.g. [["2019-06-01", "2021-08-31"], ["2021-09-15", null]].
+            Both dates are strings in YYYY-MM-DD format ("2021-08-31"); when the
+            resume gives only a month or a year, use the first day of it
+            ("Aug 2021" -> "2021-08-01", "2021" -> "2021-01-01"). Ambiguous
+            day/month-first formats such as 31/08/2021 are rejected — convert
+            them yourself first. Set end_date to null for the applicant's
+            CURRENT position (today's date is used for it); at most ONE pair may
+            have a null end_date, and start_date may never be null. Overlapping
+            positions are counted twice, so pass each position exactly once.
+            Keep the pairs in the order the positions appear on the resume
+            (oldest-first or newest-first, either is fine): when one position
+            ends in the same calendar month that the position next to it starts,
+            that shared month is counted only once.
+
+    Returns:
+        float: Total years of experience, rounded to one decimal place — e.g.
+            2.4 means 2 years and 4 months (leftover days are dropped). Returns
+            0.0 when the list is empty.
+
+    Raises:
+        TypeError / ValueError: When an entry is not a two-item pair, a date is
+            not a string in an accepted format, a date is not a real calendar
+            date or lies in the future, a start_date is missing, an end date
+            precedes its start date, or more than one end_date is null. The
+            error message names the offending entry and how to fix it — correct
+            the input and call the tool again.
+    """
+    years = _calculate_yoe(date_ranges)
+    logger.info(
+        "resume_tools: calculate_yoe(%r) -> %s years", date_ranges, years
+    )
+    return years
 
 
 def make_save_parsed_resume_tool(ctx: ResumeAnalysisContext):
@@ -247,11 +540,11 @@ def _make_hallucination_guardrail(ctx: ResumeAnalysisContext):
     try:
         from crewai.tasks.hallucination_guardrail import HallucinationGuardrail
 
-        from app.services.crew.agents import gemini_llm_extraction
+        from app.services.crew.agents import claude_llm_extraction
 
         return HallucinationGuardrail(
             context=ctx.resume_text,
-            llm=gemini_llm_extraction,
+            llm=claude_llm_extraction,
             threshold=_HALLUCINATION_THRESHOLD,
         )
     except Exception as e:  # noqa: BLE001 — never let guardrail setup break the run

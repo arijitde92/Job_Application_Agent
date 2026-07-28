@@ -34,9 +34,10 @@ sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env")
 
 DEFAULT_RESUMES = [
-    BACKEND_DIR / "sample_data" / "Yash_Raj_Singh_Oct_Resume.pdf",
-    BACKEND_DIR / "sample_data" / "Yash_Pal_Resume.pdf",
-    BACKEND_DIR / "sample_data" / "Arijit De Resume 2026.pdf",
+    BACKEND_DIR / "sample_data" / "ANUGYA_SRIVASTAVA_resume.pdf",
+    BACKEND_DIR / "sample_data" / "Deep_Mehta_resume.pdf",
+    BACKEND_DIR / "sample_data" / "Karan_Singh_Resume.pdf",
+    BACKEND_DIR / "sample_data" / "Monisha_Jagadeesan_Resume.pdf",
 ]
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 
