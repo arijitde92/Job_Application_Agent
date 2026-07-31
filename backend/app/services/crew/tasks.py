@@ -1,20 +1,25 @@
 from crewai import Task
+from pydantic import BaseModel, Field
+
 from app.services.crew.agents import (
     github_project_summarizer,
-    resume_analyzer,
-    profiler,
-    resume_strategist,
     interview_preparer,
-    extract_github_repos_tool,
-    repo_content_searcher,
+    profiler,
     read_resume,
+    resume_analyzer,
+    resume_strategist,
     semantic_search_resume,
+)
+from app.services.crew.github_tools import (
+    GithubIndexContext,
+    make_extract_github_repos_tool,
+    make_repo_content_searcher_tool,
 )
 from app.services.crew.resume_tools import (
     ResumeAnalysisContext,
     calculate_yoe,
-    make_save_parsed_resume_tool,
     make_parsed_resume_guardrail,
+    make_save_parsed_resume_tool,
 )
 from app.services.resume_parser import PARSED_RESUME_SCHEMA
 
@@ -190,14 +195,52 @@ def _resume_analysis_task(ctx: ResumeAnalysisContext, *, run_async: bool = True)
     )
 
 
-def _github_summary_task() -> Task:
+# ── GitHub summary task — structured output schema ───────────────────────────
+
+class ChosenGithubRepo(BaseModel):
+    """One GitHub repository picked as relevant to the target job."""
+
+    github_repo_name: str = Field(
+        description="The name of the selected GitHub repo."
+    )
+    relevant_skills: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The relevant skills used in this repo that match or are needed in "
+            "the job description."
+        ),
+    )
+    justification: str = Field(
+        description=(
+            "A justification of why this repo is chosen and how it is relevant "
+            "for the given job description, explaining how the skills used in "
+            "this repo are relevant for the job."
+        ),
+    )
+
+
+class GithubReposSummary(BaseModel):
+    """Structured output of the GitHub summary task."""
+
+    chosen_github_repos: list[ChosenGithubRepo] = Field(
+        default_factory=list,
+        description="The applicant's repos that are most relevant to the job.",
+    )
+
+
+def _github_summary_task(github_ctx: GithubIndexContext) -> Task:
     """GitHub task — index GitHub repos and summarise the most relevant projects."""
     return Task(
+        # NOTE: CrewAI interpolates bare {identifier} tokens in the description
+        # and expected_output. Every brace in the JSON template below is
+        # followed by a quoted key or whitespace, so none of them interpolate —
+        # never add a bare {word} token unless it is a real crew input.
         description=(
             "You have been given structured job details in JSON format:\n\n"
             "{job_details_json}\n\n"
             "Step 1 — Index the applicant's GitHub repositories:\n"
-            "  Use the extract_github_repos_tool with the GitHub URL: {github_url}\n\n"
+            "  Call the github_repos_extractor tool. It takes no arguments — the "
+            "applicant's GitHub profile is already configured.\n\n"
             "Step 2 — Build a search query:\n"
             "  From the job_description and requirements fields in the job details above, "
             "identify the key tech stacks, programming languages, frameworks, tools, and "
@@ -208,15 +251,43 @@ def _github_summary_task() -> Task:
             "Step 4 — Summarise:\n"
             "  Analyse the returned repository content and identify the applicant's most "
             "relevant projects. Highlight tech stacks, languages, frameworks, tools, and "
-            "cloud technologies that match the job requirements."
+            "cloud technologies that match the job requirements.\n\n"
+            "Step 5 — Report EXACTLY this JSON structure:\n"
+            "{\n"
+            "  \"chosen_github_repos\": [\n"
+            "    {\n"
+            "      \"github_repo_name\": \"\",\n"
+            "      \"relevant_skills\": [],\n"
+            "      \"justification\": \"\"\n"
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "Rules:\n"
+            "  - One entry per chosen repo; include only repos returned by "
+            "repo_content_searcher, and use the repo name exactly as indexed.\n"
+            "  - \"relevant_skills\" lists the skills, languages, frameworks, tools, and "
+            "cloud technologies actually used in that repo that match or are needed in the "
+            "job description — no skill the repo does not demonstrate.\n"
+            "  - \"justification\" explains why the repo was chosen and how its skills map "
+            "to the job requirements.\n"
+            "  - Do NOT invent repositories, skills, or details that are not in the "
+            "retrieved repository content.\n"
+            "  - If no repo is relevant to the job, return an empty "
+            "\"chosen_github_repos\" list.\n"
+            "  - The JSON must be strictly valid: no comments, no trailing commas, no "
+            "markdown fences."
         ),
         expected_output=(
-            "A concise summary of the applicant's most relevant GitHub projects, including "
-            "project names, tech stacks, programming languages, frameworks, tools, and cloud "
-            "technologies used. The summary should clearly connect the applicant's project "
-            "experience to the specific job requirements."
+            "A JSON object with a \"chosen_github_repos\" list, one entry per relevant "
+            "repository, each carrying its \"github_repo_name\", the \"relevant_skills\" "
+            "it demonstrates that the job requires, and a \"justification\" connecting "
+            "that project experience to the specific job requirements."
         ),
-        tools=[extract_github_repos_tool, repo_content_searcher],
+        output_pydantic=GithubReposSummary,
+        tools=[
+            make_extract_github_repos_tool(github_ctx),
+            make_repo_content_searcher_tool(github_ctx),
+        ],
         agent=github_project_summarizer,
         # Runs in parallel with the resume analysis task; the profile task's
         # context drains both before profiling starts.
@@ -288,21 +359,43 @@ def _resume_strategy_task(include_github: bool, profile_task: Task) -> Task:
 
 
 def _interview_preparation_task(profile_task: Task, resume_task: Task) -> Task:
-    """Interview task — generate interview questions and talking points."""
+    """Interview task — research the employer, then generate questions and talking points."""
     return Task(
         description=(
             "Create targeted interview questions and talking points for the applicant.\n\n"
             "Job details:\n{job_details_json}\n\n"
-            "Use the tailored resume from the resume strategy task and the profile from "
-            "the profile task to:\n"
-            "  - Generate likely interview questions based on the job_description and requirements.\n"
+            "Step 1 — Research the interview with the web_search tool:\n"
+            "  Run 2-4 searches, ONE topic per call, using the company_name, job_name and "
+            "the key technologies from the job_description above. Useful angles:\n"
+            "    - \"<company_name> <job_name> interview process rounds\"\n"
+            "    - \"<company_name> interview questions <key technology>\"\n"
+            "    - \"<key technology / skill> interview questions <seniority_level>\"\n"
+            "    - recent news about the company or the team, for the candidate's own questions.\n"
+            "  If a search returns an \"ERROR: ...\" string, or the results are irrelevant, "
+            "do NOT retry it more than once — carry on with the resume and job details "
+            "alone and note in your output that live research was unavailable.\n\n"
+            "Step 2 — Build the materials:\n"
+            "  Use the tailored resume from the resume strategy task, the profile from the "
+            "profile task, and your research to:\n"
+            "  - Generate likely interview questions based on the job_description, the "
+            "requirements, and the company's actual interview process where you found it.\n"
             "  - Prepare concise talking points that highlight how the applicant's experience "
             "matches each key requirement.\n"
-            "  - Help the candidate confidently address all aspects of the role."
+            "  - Help the candidate confidently address all aspects of the role.\n\n"
+            "Grounding rules:\n"
+            "  - Every talking point must be traceable to the applicant's profile or "
+            "tailored resume. Do NOT invent experience, projects, metrics, or skills.\n"
+            "  - Keep the two sources separate: anything taken from the web is research "
+            "about the EMPLOYER, never a claim about the applicant.\n"
+            "  - Cite the source URL for any specific claim about the company's interview "
+            "process, and do NOT present an unsourced guess as something you found."
         ),
         expected_output=(
             "A document containing key interview questions and tailored talking points that "
-            "help the candidate demonstrate how their skills and experience match the role."
+            "help the candidate demonstrate how their skills and experience match the role, "
+            "including a short section on the company's interview process and recent context "
+            "gathered via web_search, with source URLs (or an explicit note that live "
+            "research was unavailable)."
         ),
         output_file="interview_materials.md",
         context=[profile_task, resume_task],
@@ -314,6 +407,7 @@ def _interview_preparation_task(profile_task: Task, resume_task: Task) -> Task:
 def build_tasks(
     include_github: bool = True,
     resume_ctx: ResumeAnalysisContext | None = None,
+    github_ctx: GithubIndexContext | None = None,
 ) -> list[Task]:
     """
     Construct a fresh, correctly-wired task list for one crew run.
@@ -333,6 +427,11 @@ def build_tasks(
     the parsed JSON is written to temp storage but never uploaded to GCS or
     recorded in the database.
 
+    ``github_ctx`` carries the applicant's GitHub identity for the indexing and
+    search tools; it is required when ``include_github`` is True, because the
+    vector-store search is scoped by it (an unscoped search would span every
+    indexed applicant's repositories).
+
     Return order is stable across both modes: the interview task is always the
     last element and the resume task always the second-to-last, so the runner
     can stamp per-request ``output_file`` paths via ``crew.tasks[-1]/[-2]``.
@@ -341,8 +440,13 @@ def build_tasks(
         resume_ctx = ResumeAnalysisContext(
             user_id=0, resume_id=0, user_name="cli_user", local_only=True
         )
+    if include_github and github_ctx is None:
+        raise ValueError(
+            "build_tasks(include_github=True) requires a github_ctx — without it "
+            "the repo search cannot be scoped to the applicant."
+        )
 
-    github_task = _github_summary_task() if include_github else None
+    github_task = _github_summary_task(github_ctx) if include_github else None
     analysis = _resume_analysis_task(resume_ctx)
     profile = _profile_task(include_github, github_task, analysis)
     resume = _resume_strategy_task(include_github, profile)

@@ -15,6 +15,10 @@ from dotenv import load_dotenv
 
 from app.core.logging import get_logger, log_token_usage
 from app.services.crew.crew import build_crew
+from app.services.crew.github_tools import (
+    GithubIndexContext,
+    github_username_from_url,
+)
 from app.services.extractors.linkedin_extractor import (
     extract_linkedin_job_details,
     JobDetails,
@@ -57,7 +61,11 @@ def main() -> None:
     }
 
     logger.info("crew CLI: Starting job applier crew execution...")
-    crew = build_crew()
+    github_ctx = GithubIndexContext(
+        github_url=args.github,
+        github_username=github_username_from_url(args.github),
+    )
+    crew = build_crew(github_ctx=github_ctx)
     result = crew.kickoff(inputs=job_application_inputs)
     logger.info("crew CLI: Crew execution completed.")
     if hasattr(result, "token_usage"):

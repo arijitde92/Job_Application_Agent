@@ -28,15 +28,18 @@ dependencies = [
     "google-auth>=2.25.0",
     # ── Google Cloud ───────────────────────────────────────────────────────
     "google-cloud-storage>=2.14.0",
-    "google-cloud-bigquery>=3.0.0",
     # ── LLM / Agent pipeline (CrewAI) ──────────────────────────────────────
     "crewai[anthropic]",
     "crewai-tools[mcp]",
     # ── RAG / embeddings ───────────────────────────────────────────────────
+    # langchain is kept only for GithubFileLoader + the text splitter; the
+    # vector store and embeddings are the native Weaviate / Voyage SDKs.
+    # langchain-google-genai is still used by the RAGAS judge (tests/ragas).
     "langchain-community",
     "langchain-google-genai",
-    "langchain-google-community[featurestore]",
     "langchain-text-splitters",
+    "weaviate-client>=4.22,<5",
+    "voyageai>=0.5,<1",
     # ── Document parsing & scraping ────────────────────────────────────────
     "beautifulsoup4",
     "openpyxl",

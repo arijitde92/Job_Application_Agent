@@ -44,7 +44,7 @@ def _update_progress(job_id: int, step: str, error: str = None):
 
 def _run_crew_sync(
     job_id: int, user_id: int, user_email: str,
-    github_username: str = None, github_url: str = None, bq_dataset_name: str = None,
+    github_username: str = None, github_url: str = None,
     resume_bytes: bytes = None, resume_filename: str = None, job_url: str = None,
     resume_id: int = None, user_name: str = None,
 ):
@@ -112,6 +112,10 @@ def _run_crew_sync(
         _update_progress(job_id, "building_profile")
 
         from app.services.crew.crew import build_crew
+        from app.services.crew.github_tools import (
+            GithubIndexContext,
+            github_username_from_url,
+        )
         from app.services.crew.resume_tools import ResumeAnalysisContext
 
         applicant_name = user_email.split("@")[0].replace(".", "_")
@@ -135,9 +139,20 @@ def _run_crew_sync(
             resume_text=resume_text,
         )
 
+        # GitHub identity for the indexing / search tools. Scoping the vector
+        # search to this account is what keeps one applicant's crew from
+        # retrieving another applicant's repository content.
+        github_ctx = None
+        if include_github:
+            github_ctx = GithubIndexContext(
+                github_url=github_url,
+                github_username=github_username or github_username_from_url(github_url),
+            )
+
         crew = build_crew(
             output_log_file=crew_log_path, verbose=True, tracing=False,
             include_github=include_github, resume_ctx=resume_ctx,
+            github_ctx=github_ctx,
         )
         logger.info("crew_runner: Crew verbose log → %s", crew_log_path)
 
@@ -158,7 +173,6 @@ def _run_crew_sync(
         }
         if include_github:
             job_application_inputs["github_url"] = github_url
-            job_application_inputs["bq_dataset_name"] = bq_dataset_name
 
         result = crew.kickoff(inputs=job_application_inputs)
         logger.info("crew_runner: Crew execution completed for job %d. Log saved to %s", job_id, crew_log_path)
@@ -228,16 +242,18 @@ async def run_crew_for_job(
             await db.commit()
 
         # github_profile may be None when the user tailors without GitHub.
+        # Note: github_profile.bq_dataset_name is no longer read — the vector
+        # store moved from per-user BigQuery datasets to a single Weaviate
+        # collection scoped by github_username. The column is left in place.
         gh_username = github_profile.github_username if github_profile else None
         gh_url = github_profile.github_url if github_profile else None
-        gh_dataset = github_profile.bq_dataset_name if github_profile else None
 
         # Run crew in thread pool
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             _executor, _run_crew_sync,
             job_id, user_id, user_email,
-            gh_username, gh_url, gh_dataset,
+            gh_username, gh_url,
             resume_bytes, resume_filename, job_url,
             resume_id, user_name,
         )

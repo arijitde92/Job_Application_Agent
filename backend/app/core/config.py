@@ -43,14 +43,36 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: str = Field(default="", description="Path to GCP service account JSON")
     GCP_PROJECT_ID: str = Field(default="", description="GCP project ID")
     GCP_LOCATION: str = Field(default="asia-south2", description="GCP region")
-    GCP_DATASET_NAME: str = Field(default="job_applier_app", description="BigQuery dataset name")
-    GCP_TABLE_NAME: str = Field(default="github_repo_data", description="BigQuery table name")
+
+    # ── Weaviate (GitHub repo vector store) ───────────────────────────────
+    # Replaces the former BigQuery vector store. WEAVIATE_URL may be given
+    # with or without a scheme — the store normalises it to https://.
+    WEAVIATE_URL: str = Field(default="", description="Weaviate Cloud cluster URL or host")
+    WEAVIATE_API_KEY: str = Field(default="", description="Weaviate Cloud API key")
+    WEAVIATE_COLLECTION_NAME: str = Field(
+        default="GithubRepoData",
+        description="Weaviate collection holding GitHub repo chunks (must start uppercase)",
+    )
+
+    # ── Voyage AI (embeddings + reranking) ────────────────────────────────
+    VOYAGE_API_KEY: str = Field(default="", description="Voyage AI API key")
+    VOYAGE_EMBED_MODEL: str = Field(default="voyage-code-3", description="Voyage embedding model")
+    VOYAGE_EMBED_DIMENSION: int = Field(
+        default=1024,
+        description="Voyage embedding output dimension (voyage-code-3 supports 256/512/1024/2048)",
+    )
+    VOYAGE_RERANK_MODEL: str = Field(default="rerank-2.5-lite", description="Voyage reranker model")
 
     # ── API Keys (existing) ───────────────────────────────────────────────
     BRIGHT_DATA_API_KEY: str = Field(default="", description="Bright Data MCP API key")
     GITHUB_PERSONAL_ACCESS_TOKEN: str = Field(default="", description="GitHub PAT")
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
     SERPER_API_KEY: str = Field(default="", description="Serper search API key")
+    ZAI_API_KEY: str = Field(default="", description="Z.ai API key (GLM models)")
+    ZAI_BASE_URL: str = Field(
+        default="",
+        description="Override for Z.ai's OpenAI-compatible base URL; blank uses https://api.z.ai/api/paas/v4",
+    )
 
     # ── Crew AI ───────────────────────────────────────────────────────────
     CREWAI_TOOLS_ALLOW_UNSAFE_PATHS: bool = Field(default=True, description="Allow CrewAI tools to access unsafe paths")

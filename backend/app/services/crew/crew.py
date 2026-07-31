@@ -23,6 +23,7 @@ from app.services.crew.agents import (
     resume_strategist,
     interview_preparer,
 )
+from app.services.crew.github_tools import GithubIndexContext
 from app.services.crew.resume_tools import ResumeAnalysisContext
 from app.services.crew.tasks import build_tasks
 
@@ -35,6 +36,7 @@ def build_crew(
     tracing: bool = True,
     include_github: bool = True,
     resume_ctx: ResumeAnalysisContext | None = None,
+    github_ctx: GithubIndexContext | None = None,
 ) -> Crew:
     """
     Construct the job-application :class:`crewai.Crew`.
@@ -51,19 +53,24 @@ def build_crew(
         output_log_file: Path for CrewAI's verbose execution log.
         verbose: Enable verbose agent/task logging.
         tracing: Enable CrewAI tracing.
-        include_github: When True, include the GitHub summarizer agent/task and
-            require the ``github_url`` / ``bq_dataset_name`` crew inputs. When
-            False, skip GitHub entirely and tailor from the resume + job details.
+        include_github: When True, include the GitHub summarizer agent/task.
+            When False, skip GitHub entirely and tailor from the resume + job
+            details.
         resume_ctx: Identity/state context for the resume analysis task's save
             tool. When None (standalone CLI), the parsed resume JSON is written
             to temp storage only — no GCS upload, no database write.
+        github_ctx: The applicant's GitHub identity, closured into the indexing
+            and search tools so the vector-store search is scoped to their own
+            repositories. Required when ``include_github`` is True.
 
     Returns:
         A configured :class:`crewai.Crew` ready for ``kickoff(inputs=...)``.
         The task list order is stable: the interview task is always last and the
         resume task always second-to-last (``crew.tasks[-1]`` / ``[-2]``).
     """
-    tasks = build_tasks(include_github=include_github, resume_ctx=resume_ctx)
+    tasks = build_tasks(
+        include_github=include_github, resume_ctx=resume_ctx, github_ctx=github_ctx
+    )
 
     agents = [resume_analyzer, profiler, resume_strategist, interview_preparer]
     if include_github:

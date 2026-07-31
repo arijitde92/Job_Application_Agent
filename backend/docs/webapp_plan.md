@@ -40,8 +40,10 @@ graph LR
 
 **Key observations:**
 - `Job_Applier.py` pre-fetches job details via `extract_linkedin_job_details()` then passes JSON to all crew tasks
-- `github_repo_extractor.py` uses `GithubFileLoader` → Vertex AI embeddings → BigQuery vector store
-- BigQuery dataset/table are configured via env vars (`GCP_DATASET_NAME`, `GCP_TABLE_NAME`)
+- `github_repo_extractor.py` uses `GithubFileLoader` → ~~Vertex AI embeddings → BigQuery vector store~~
+  **(now Voyage `voyage-code-3` embeddings → Weaviate Cloud, with `rerank-2.5-lite` reranking)**
+- ~~BigQuery dataset/table are configured via env vars (`GCP_DATASET_NAME`, `GCP_TABLE_NAME`)~~
+  Weaviate/Voyage are configured via `WEAVIATE_URL`, `WEAVIATE_API_KEY`, `WEAVIATE_COLLECTION_NAME`, `VOYAGE_API_KEY`
 - The crew outputs a tailored resume as `{applicant_name}_{company_name}_{job_name}_resume.md` locally
 - LLM: Gemini 2.5 Flash via `gemini/gemini-2.5-flash`
 
@@ -302,20 +304,36 @@ async def run_crew_for_job(job_id, user, github_profile, resume_gcs_path, job_ur
 
 ### Component 4: Existing Code Modifications
 
-#### [MODIFY] [github_repo_extractor.py](file:///home/arijit/Documents/github/Job_Application_Agent/github_repo_extractor.py)
+> **SUPERSEDED — per-user isolation is done, but not this way.** The
+> `dataset_name` plumbing below was never completed, and the vector store has
+> since moved from BigQuery to Weaviate Cloud. Isolation is now a property
+> filter (`repo_username`) on a single shared `GithubRepoData` collection, not a
+> dataset per user. Crucially the scope is **not** a crew input variable — the
+> applicant's GitHub identity is closured into the tools by
+> `app/services/crew/github_tools.py` (`GithubIndexContext` +
+> `make_extract_github_repos_tool` / `make_repo_content_searcher_tool`),
+> following the same factory pattern as `resume_tools.py`, so the LLM cannot
+> choose which account to search. `github_profiles.bq_dataset_name` remains as a
+> vestigial column and is no longer read.
 
-- `process_github_repo_to_bq()`: Add optional `dataset_name` parameter (defaults to env var for backward compatibility). When called from the web app, pass the user-specific dataset name.
-- `query_github_vector_store()`: Same — add optional `dataset_name` parameter.
+#### [MODIFY] github_repo_extractor.py — *superseded*
 
-#### [MODIFY] [agents.py](file:///home/arijit/Documents/github/Job_Application_Agent/agents.py)
+- ~~`process_github_repo_to_bq()`: Add optional `dataset_name` parameter.~~
+  Renamed to `process_github_repo_to_vector_store()`; writes to Weaviate.
+- ~~`query_github_vector_store()`: Same — add optional `dataset_name` parameter.~~
+  Now takes `repo_username` / `repo_names` filters and reranks results.
 
-- Refactor `extract_github_repos_tool` and `repo_content_searcher` to accept `dataset_name` as a parameter (passed via crew input variables).
-- The tools will use the user-specific BQ dataset when called from the web app.
+#### [MODIFY] agents.py — *superseded*
+
+- ~~Refactor `extract_github_repos_tool` and `repo_content_searcher` to accept
+  `dataset_name` as a parameter (passed via crew input variables).~~
+  Both tools moved to `crew/github_tools.py` as per-run factories.
 
 #### [MODIFY] [tasks.py](file:///home/arijit/Documents/github/Job_Application_Agent/tasks.py)
 
 - `resume_strategy_task`: Change `output_file` to a temp path that the web app can read and upload to GCS.
-- Add `{bq_dataset_name}` as a crew input variable passed to tasks that use BQ.
+- ~~Add `{bq_dataset_name}` as a crew input variable passed to tasks that use BQ.~~
+  Not needed — `build_tasks(github_ctx=...)` attaches the scoped tools instead.
 
 ---
 

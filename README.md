@@ -1,6 +1,6 @@
 # Job Application Agent
 
-A powerful, multi-agent automation system for job applications, leveraging [Crew AI](https://www.crewai.com/) to orchestrate specialized agents that extract, analyze, and summarize job postings, tailor resumes, and prepare interview materials. The system integrates with Google BigQuery and Vertex AI for advanced document storage and semantic search, and features custom tools for LinkedIn and GitHub data extraction.
+A powerful, multi-agent automation system for job applications, leveraging [Crew AI](https://www.crewai.com/) to orchestrate specialized agents that extract, analyze, and summarize job postings, tailor resumes, and prepare interview materials. Semantic search over your GitHub projects runs on a [Weaviate](https://weaviate.io/) vector store with [Voyage AI](https://www.voyageai.com/) embeddings and reranking, and the system features custom tools for LinkedIn and GitHub data extraction plus Serper-backed web research.
 
 This project also includes a **Full-Stack Web App version** with a **FastAPI backend** (using Google Cloud SQL MySQL and GCS storage) and a **React + Vite frontend** that displays live agent execution progress via Server-Sent Events (SSE).
 
@@ -14,7 +14,8 @@ Job_Application_Agent/
 │   ├── app/
 │   │   ├── api/            # Route handlers (api/v1) + shared deps
 │   │   ├── core/           # config, security, database, logging
-│   │   ├── services/       # GCS, crew runner, CrewAI pipeline, extractors
+│   │   ├── services/       # GCS, crew runner, CrewAI pipeline, extractors,
+│   │   │                   #   vector_store (Weaviate + Voyage)
 │   │   ├── models/         # SQLAlchemy ORM models
 │   │   ├── schemas/        # Pydantic schemas
 │   │   └── main.py         # App init + CORS + routers
@@ -40,10 +41,11 @@ Job_Application_Agent/
 | **Python** | 3.11+ (3.12 recommended). You don't need to install it manually — `uv` will fetch a matching interpreter. |
 | **[uv](https://docs.astral.sh/uv/)** | The Python package & project manager used here. Install: `curl -LsSf https://astral.sh/uv/install.sh \| sh` (then restart your shell so `~/.local/bin` is on `PATH`). |
 | **Node.js** | 18+ (with `npm`), for the React frontend. [Download](https://nodejs.org/en/download). |
-| **Google Cloud account** | A GCP project with **BigQuery**, **Vertex AI**, **Cloud SQL Admin**, and **Cloud Storage** APIs enabled, plus a **service-account JSON key**. See [backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md). |
+| **Google Cloud account** | A GCP project with the **Cloud SQL Admin** and **Cloud Storage** APIs enabled, plus a **service-account JSON key**. BigQuery and Vertex AI are **no longer required** — the vector store moved off GCP. See [backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md). |
 | **Cloud SQL (MySQL)** | A Cloud SQL MySQL instance (the web app stores users/jobs there). |
 | **[Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/mysql/sql-proxy)** | `cloud-sql-proxy` binary on `PATH` (the `uv run db-proxy` / `uv run dev` commands invoke it). See [Installation](https://docs.cloud.google.com/sql/docs/mysql/connect-instance-auth-proxy) to install|
-| **API keys** | GitHub PAT, Bright Data, Gemini, and (optionally) Serper. See [API Keys & Cloud Setup](#-api-keys--cloud-setup). |
+| **[Weaviate Cloud](https://console.weaviate.cloud/)** | A cluster for the GitHub repo vector store (the free sandbox tier is enough to start). |
+| **API keys** | GitHub PAT, Bright Data, Gemini, Anthropic, Z.ai, Weaviate, Voyage AI, and Serper. See [API Keys & Cloud Setup](#-api-keys--cloud-setup). |
 
 > **All `uv run` commands are run from the `backend/` directory** — the project
 > and its custom commands are defined in `backend/pyproject.toml`. There is no
@@ -103,11 +105,13 @@ env-var overrides, and the standalone crew CLI.
 
 ## 🚀 Features
 
-- **Multi-Agent Orchestration:** Uses Crew AI to coordinate agents for research, profiling, resume tailoring, and interview preparation.
-- **Custom Tools:** Includes LinkedIn job extractor and GitHub repo summarizer, built using Crew AI's extensible tool system.
-- **BigQuery + Vertex AI:** Stores and semantically searches GitHub project data using Google BigQuery as a vector store and Vertex AI for embeddings.
+- **Multi-Agent Orchestration:** Uses Crew AI to coordinate agents for GitHub analysis, resume parsing, profiling, resume tailoring, and interview preparation.
+- **Custom Tools:** Includes LinkedIn job extractor, GitHub repo summarizer, and Serper web search, built using Crew AI's extensible tool system.
+- **Weaviate + Voyage AI:** Stores and semantically searches GitHub project data in a Weaviate vector store, using Voyage AI's code-specialised `voyage-code-3` embeddings and a `rerank-2.5-lite` second-stage reranker.
+- **Structured Resume Parsing:** A dedicated Resume Analyzer agent extracts the resume into a validated JSON schema, deriving years of experience with a deterministic tool rather than LLM arithmetic.
 - **Automated Resume Tailoring:** Aligns your resume with job requirements and optimizes for ATS.
-- **Interview Prep:** Generates tailored interview questions and talking points.
+- **Interview Prep:** Researches the employer on the web, then generates tailored interview questions and talking points.
+- **Purpose-Matched LLMs:** Each agent runs on the model that suits its job — Gemini for synthesis, GLM-5.2 for repo analysis, Claude Sonnet 5 for structured extraction.
 
 ---
 
@@ -116,24 +120,40 @@ env-var overrides, and the standalone crew CLI.
 ### Crew AI Multi-Agent System
 
 - **Crew AI** ([Homepage](https://www.crewai.com/)): The backbone of the system, enabling modular, collaborative agent workflows.
-- **Agents:**
-  - **GitHub Project Summarizer:** Summarizes your most relevant GitHub projects.
-  - **Profiler:** Compiles a comprehensive personal/professional profile.
-  - **Resume Strategist:** Tailors your resume for each job.
-  - **Interview Preparer:** Prepares interview questions and talking points.
+- **Agents:** (each runs on the LLM best suited to its task — see [backend/app/services/crew/agents.py](backend/app/services/crew/agents.py))
+
+  | Agent | Role | LLM |
+  | ----- | ---- | --- |
+  | **GitHub Project Summarizer** | Indexes your repos and picks the ones most relevant to the job. | GLM-5.2 (Z.ai) |
+  | **Resume Analyzer** | Extracts the resume into validated structured JSON. | Claude Sonnet 5 |
+  | **Profiler** | Compiles a comprehensive personal/professional profile. | Gemini |
+  | **Resume Strategist** | Tailors your resume for each job. | Gemini |
+  | **Interview Preparer** | Researches the employer via web search, then prepares interview questions and talking points. | Gemini |
+
+  The GitHub summary and resume analysis tasks run **in parallel**; profiling waits
+  on both. When no GitHub profile is supplied, that agent and its task are skipped
+  entirely and the rest run under explicit grounding rules so nothing is fabricated.
 
 ### Crew AI Tools Used
 
 - **FileReadTool:** Reads and processes resume files.
 - **ScrapeWebsiteTool:** Scrapes web content for job and company info.
 - **MDXSearchTool:** Performs semantic search on resume content.
-- **SerperDevTool:** (If enabled) For advanced web search.
+- **SerperDevTool:** Web search for the Resume Strategist.
 
 ### Custom Tools
 
 - **LinkedIn Job Extractor:** Scrapes and parses job details from LinkedIn job postings.
 - **GitHub Repos Extractor:** Recursively fetches and summarizes public GitHub repositories for a user.
-- **BigQuery/Vertex AI Integration:** Custom logic to store and search GitHub repo content using Google's cloud AI stack.
+- **Web Search (`web_search`):** Serper-backed Google search used by the Interview
+  Preparer to research the employer's interview process, role-specific questions,
+  and recent company news. Returns a compact ranked digest (featured answer +
+  title/URL/snippet) rather than Serper's raw JSON. It never raises: if the key is
+  missing or the API fails it returns an `ERROR: ...` observation and the agent
+  falls back to the resume and job details alone, so a search outage cannot sink a
+  run whose resume tailoring has already completed.
+- **Weaviate/Voyage AI Integration:** Custom logic to chunk, embed, upsert, and search GitHub repo content — one shared Weaviate collection, with every search scoped to the applicant's own repositories.
+- **Resume Tools:** A `calculate_yoe` tool for deterministic years-of-experience arithmetic and a per-run `save_parsed_resume` tool that validates the JSON against the schema before persisting it.
 
 ---
 
@@ -143,9 +163,11 @@ env-var overrides, and the standalone crew CLI.
   environment management (see `backend/pyproject.toml`)
 - **FastAPI** backend (async SQLAlchemy + Cloud SQL MySQL, JWT/Google OAuth auth)
 - **React + Vite** frontend with live progress via Server-Sent Events (SSE)
-- **Crew AI** for agent orchestration
-- **Google BigQuery** as a vector store for document embeddings
-- **Vertex AI** for generating and querying semantic embeddings
+- **Crew AI** for agent orchestration, across **Gemini**, **GLM-5.2** (Z.ai) and
+  **Claude Sonnet 5** depending on the agent
+- **Weaviate Cloud** as the vector store for GitHub repo embeddings
+- **Voyage AI** for code-specialised embeddings (`voyage-code-3`) and reranking
+  (`rerank-2.5-lite`)
 - **Google Cloud Storage** for resume & generated-output storage
 - **Bright Data MCP** for LinkedIn job scraping; **LangChain** for document
   loading and chunking
@@ -162,14 +184,24 @@ All backend configuration lives in **`backend/.env`** (copy it from
 GOOGLE_APPLICATION_CREDENTIALS=/abs/path/to/backend/credentials/service-account.json
 GCP_PROJECT_ID=your-project-id
 GCP_LOCATION=asia-south2
-GCP_DATASET_NAME=job_applier_app
-GCP_TABLE_NAME=github_repo_data
+
+# ── Vector store (Weaviate Cloud + Voyage AI — not GCP) ──────────
+WEAVIATE_URL=...                 # cluster REST endpoint; scheme optional
+WEAVIATE_API_KEY=...
+WEAVIATE_COLLECTION_NAME=GithubRepoData
+VOYAGE_API_KEY=...               # embeddings + reranking
+VOYAGE_EMBED_MODEL=voyage-code-3
+VOYAGE_EMBED_DIMENSION=1024
+VOYAGE_RERANK_MODEL=rerank-2.5-lite
 
 # ── API keys ─────────────────────────────────────────────────────
 GITHUB_PERSONAL_ACCESS_TOKEN=...
 BRIGHT_DATA_API_KEY=...          # LinkedIn scraping (Bright Data MCP)
-GEMINI_API_KEY=...               # Crew LLM + Vertex embeddings
-SERPER_API_KEY=...               # optional web search
+GEMINI_API_KEY=...               # Profiler / Strategist / Interview Preparer
+ANTHROPIC_API_KEY=...            # Resume Analyzer (Claude Sonnet 5)
+ZAI_API_KEY=...                  # GitHub Project Summarizer (GLM-5.2)
+ZAI_BASE_URL=                    # optional override; blank = https://api.z.ai/api/paas/v4
+SERPER_API_KEY=...               # web search (Interview Preparer research)
 
 # ── Cloud SQL (MySQL) ────────────────────────────────────────────
 MYSQL_HOST=127.0.0.1             # 127.0.0.1 when using the Cloud SQL Auth Proxy
@@ -193,8 +225,8 @@ The frontend has its own `frontend/.env` (copy from `frontend/.env.example`) for
 > and instance `job-applier-mysql` by default — override with `CLOUD_SQL_INSTANCE`
 > if yours differs.
 
-For step-by-step GCP provisioning (project, BigQuery dataset, Cloud SQL instance,
-GCS bucket, service account), see **[backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md)**.
+For step-by-step GCP provisioning (project, Cloud SQL instance, GCS bucket,
+service account), see **[backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md)**.
 
 ---
 
@@ -211,8 +243,8 @@ uv run crew \
     --name "Your Name"
 ```
 
-This extracts the job, indexes the GitHub repos into BigQuery, tailors the
-resume, and writes interview materials — same pipeline the web app drives.
+This extracts the job, indexes the GitHub repos into Weaviate, parses and tailors
+the resume, and writes interview materials — same pipeline the web app drives.
 
 ---
 
@@ -222,22 +254,26 @@ All keys go in `backend/.env`.
 
 - **GitHub:** [Create a Personal Access Token](https://github.com/settings/tokens) → `GITHUB_PERSONAL_ACCESS_TOKEN`.
 - **Google Cloud:**
-  - Enable **BigQuery**, **Vertex AI**, **Cloud SQL Admin**, and **Cloud Storage** APIs.
-  - Create a service account with the relevant roles (BigQuery, Vertex AI User, Cloud SQL Client, Storage Object Admin).
+  - Enable the **Cloud SQL Admin** and **Cloud Storage** APIs. BigQuery and Vertex AI are no longer used.
+  - Create a service account with the relevant roles (Cloud SQL Client, Storage Object Admin).
   - Download the JSON key into `backend/credentials/` and point `GOOGLE_APPLICATION_CREDENTIALS` at it.
-- **Gemini:** [Get a Gemini API key](https://aistudio.google.com/app/apikey) → `GEMINI_API_KEY` (the crew's LLM + embeddings).
+- **Weaviate:** Create a cluster at [Weaviate Cloud](https://console.weaviate.cloud/) → `WEAVIATE_URL` + `WEAVIATE_API_KEY` (GitHub repo vector store).
+- **Voyage AI:** [Get an API key](https://www.voyageai.com/) → `VOYAGE_API_KEY` (embeddings + reranking for the GitHub RAG pipeline).
+- **Gemini:** [Get a Gemini API key](https://aistudio.google.com/app/apikey) → `GEMINI_API_KEY` (Profiler, Resume Strategist, Interview Preparer, and the RAGAS judge).
+- **Anthropic:** [Get an API key](https://console.anthropic.com/) → `ANTHROPIC_API_KEY` (the Resume Analyzer runs on Claude Sonnet 5).
+- **Z.ai:** [Get an API key](https://z.ai/) → `ZAI_API_KEY` (the GitHub Project Summarizer runs on GLM-5.2).
 - **Bright Data:** [Get an API key](https://brightdata.com/) for the MCP scraper → `BRIGHT_DATA_API_KEY` (LinkedIn job extraction).
-- **Serper (optional):** [Get a Serper API key](https://serper.dev/) → `SERPER_API_KEY` (web search tool).
+- **Serper:** [Get a Serper API key](https://serper.dev/) → `SERPER_API_KEY` (the `web_search` tool). Strictly optional — without it the crew still runs end to end, but the Interview Preparer loses its company research and works from the resume and job details alone.
 
 ---
 
 ## 📚 How it Works
 
 1. **Job Extraction:** The job posting is scraped once via the Bright Data MCP LinkedIn extractor and parsed into structured `JobDetails`, which are injected into every downstream task.
-2. **GitHub Analysis:** The GitHub Project Summarizer indexes and summarizes your public repos, storing embeddings in BigQuery using Vertex AI.
-3. **Profile Compilation:** The Profiler agent creates a comprehensive profile using your resume, GitHub summaries, and job requirements.
+2. **GitHub Analysis & Resume Parsing (in parallel):** The GitHub Project Summarizer chunks and indexes your public repos into Weaviate with Voyage embeddings, then retrieves and reranks the projects most relevant to the job. Meanwhile the Resume Analyzer extracts your resume into validated structured JSON.
+3. **Profile Compilation:** The Profiler agent creates a comprehensive profile using the parsed resume, GitHub summaries, and job requirements.
 4. **Resume Tailoring:** The Resume Strategist aligns your resume with the job description.
-5. **Interview Prep:** The Interview Preparer generates custom interview questions and talking points.
+5. **Interview Prep:** The Interview Preparer researches the company's interview process and role-specific questions with the `web_search` tool, then generates custom interview questions and talking points grounded in your tailored resume — citing sources for anything it found on the web.
 
 ---
 
@@ -257,7 +293,7 @@ MIT License
 ## 🤝 Acknowledgements
 
 - [Crew AI](https://www.crewai.com/)
-- [Google Cloud BigQuery](https://cloud.google.com/bigquery)
-- [Vertex AI](https://cloud.google.com/vertex-ai)
+- [Weaviate](https://weaviate.io/)
+- [Voyage AI](https://www.voyageai.com/)
 - [LangChain](https://python.langchain.com/)
 - [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/)

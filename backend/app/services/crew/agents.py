@@ -1,5 +1,3 @@
-from time import sleep
-from typing import List, Union
 from crewai import Agent, LLM
 from crewai_tools import (
   FileReadTool,
@@ -8,23 +6,35 @@ from crewai_tools import (
   SerperDevTool
 )
 from crewai.tools import tool
-import requests
-from bs4 import BeautifulSoup
-import json
 import os
 from dotenv import load_dotenv
-from app.services.extractors.github_extractor import process_github_repo_to_bq, query_github_vector_store
 from app.services.extractors.linkedin_extractor import extract_linkedin_job_details, JobDetails
+from app.services.crew.search_tools import web_search
+from app.services.crew.zai_llm import ZaiLLM
 from app.core.logging import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
 # LLM configuration — Gemini
 gemini_llm = LLM(
-    model="gemini/gemini-2.5-flash",
+    model="gemini/gemini-3.5-flash-lite",
     api_key=os.environ.get("GEMINI_API_KEY"),
     temperature=0.5,
     max_tokens=8000
+)
+
+# GLM-5.2 via Z.ai (github_project_summarizer). CrewAI has no native GLM
+# provider, so ZaiLLM drives CrewAI's native OpenAI client against Z.ai's
+# OpenAI-compatible endpoint — see app.services.crew.zai_llm for why the
+# plain LLM(...) factory cannot express this.
+#
+# max_tokens is deliberately large: GLM-5.2 reasons by default and those
+# reasoning tokens are charged against max_tokens, so a tight cap gets the
+# response truncated (finish_reason="length") before any content is emitted.
+glm_llm = ZaiLLM(
+    model="glm-5.2",
+    temperature=0.3,
+    max_tokens=16000,
 )
 
 # Structured-extraction LLM (resume_analyzer): Anthropic Claude Sonnet 5. The
@@ -55,74 +65,6 @@ scrape_tool = ScrapeWebsiteTool()
 read_resume = FileReadTool()
 semantic_search_resume = MDXSearchTool()
 
-GITHUB_REPO_SEARCH_LIMIT = 10   # Number of repositories to scan and index
-
-@tool("github_repos_extractor")
-def extract_github_repos_tool(user_url: str) -> Union[List[str] | None]:
-    """
-    Extracts public GitHub repositories of a user.
-    This function takes a GitHub user URL as input and retrieves
-    the list of public repository URLs owned by that user.
-    Args:
-        user_url (str): The GitHub user URL.
-    Returns:
-        List[str]: A list of URLs of the user's public repositories.
-    """
-
-    def get_repository_links(user_url: str, github_repo_urls: List[str]) -> List[str]:
-        """
-        Recursively fetches all repository links from a GitHub user page.
-        Args:
-            user_url (str): The URL of the GitHub user page.
-            github_repo_urls (List[str]): Accumulator for repo URLs.
-        Returns:
-            List[str]: A list of repository URLs.
-        """
-        if user_url[-1] == '/':
-            user_url = user_url[:-1]
-
-        user_url = user_url + "?tab=repositories"
-        # Extract the username from the URL
-        user_name = user_url.split('/')[-1].split('?')[0]
-
-        # Fetch the url of each repository
-        logger.info("crew.agents: Searching URL: %s", user_url)
-        response = requests.get(user_url, headers={'User-Agent': "Chrome/51.0.2704.106"})
-        if response.status_code != 200:
-            logger.error("crew.agents: Error Occurred: Response Code: %s", response.status_code)
-            return github_repo_urls
-        html_content = response.content
-        soup = BeautifulSoup(html_content, 'html.parser')
-        repo_headings = soup.select('h3.wb-break-all')
-        for repo_heading in repo_headings:
-            repo_name = repo_heading.a.attrs["href"].split('/')[-1]
-            link = 'https://github.com/' + user_name + "/" + repo_name
-            logger.info("crew.agents: Found repo: %s", link)
-            github_repo_urls.append(link)
-        pages = soup.find_all(attrs={"class": "next_page"})
-        if len(pages) > 0:
-            # find the next page link if <a href> exists
-            if pages[0].name == 'a':
-                next_page_link = 'https://github.com' + pages[0].attrs['href']
-                github_repo_urls = get_repository_links(next_page_link, github_repo_urls)
-        return github_repo_urls
-    
-    # Call the function to get repository links
-    github_repo_urls = get_repository_links(user_url, [])
-    logger.info("crew.agents: Found %d repositories from %s", len(github_repo_urls), user_url)
-    if not github_repo_urls:
-        logger.warning("crew.agents: No repositories found or an error occurred.")
-        return None
-    logger.info("crew.agents: Found %d repositories for user %s", len(github_repo_urls), user_url)
-    for repo_url in github_repo_urls[:GITHUB_REPO_SEARCH_LIMIT]:
-        process_github_repo_to_bq(repo_url,
-                                  file_filter=lambda file_path: file_path.endswith(('.py', '.ipynb', '.md', '.txt')),
-                                  access_token=os.environ.get('GITHUB_PERSONAL_ACCESS_TOKEN'))
-        sleep(20)
-    
-    return github_repo_urls[:GITHUB_REPO_SEARCH_LIMIT]  # Limit to first GITHUB_REPO_SEARCH_LIMIT repositories
-
-
 @tool("linkedin_job_extractor")
 def extract_linkedin_job_details_tool(url: str) -> str:
     """
@@ -146,41 +88,21 @@ def extract_linkedin_job_details_tool(url: str) -> str:
     )
     return job.to_agent_string()
 
-@tool("repo_content_searcher")
-def repo_content_searcher(query: str, job_description: str = None, top_k: int = 5):
-    """
-    Searches the vector store for relevant GitHub repo content using the query, resume, and job description as context.
-    Args:
-        query (str): The search query.
-        resume (str): The user's resume (optional, used as context).
-        job_description (str): The job description (optional, used as context).
-        top_k (int): Number of top results to return.
-    Returns:
-        List[dict]: List of relevant content chunks with metadata.
-    """
-    # Combine context for a richer query
-    context = ""
-    if job_description:
-        context += f"Job Description: {job_description}\n"
-    full_query = f"{context}\nQuery: {query}"
-    results = query_github_vector_store(full_query, top_k=top_k)
-    return [
-        {
-            "content": content,
-            "metadata": metadata
-        } for content, metadata in results
-    ]
 
 # NOTE: The Researcher agent has been removed. Job extraction is done
 # directly in Job_Applier.py via extract_linkedin_job_details() and the
 # structured JobDetails are passed into every task via crew input variables.
 
 # Agent 1: GitHub Project Summarizer
+# No agent-level tools: the per-run indexing and search tools (closured over the
+# applicant's GitHub identity, see app.services.crew.github_tools) are attached
+# at the Task level by build_tasks(), which keeps this module-level singleton
+# thread-safe across concurrent crew runs and stops one applicant's search from
+# reaching another applicant's repositories.
 github_project_summarizer = Agent(
     role="GitHub Project Summarizer",
     goal="Summarize the user's most relevant GitHub projects for a job application, highlighting tech stacks, languages, frameworks, tools, and cloud technologies used.",
-    tools=[extract_github_repos_tool, repo_content_searcher],
-    llm=gemini_llm,
+    llm=glm_llm,
     verbose=True,
     max_iter=8,
     max_rpm=10,
@@ -269,11 +191,17 @@ resume_strategist = Agent(
 )
 
 # Agent 5: Interview Preparer
+# Uses the project's own `web_search` (app.services.crew.search_tools) instead of
+# crewai_tools' SerperDevTool: same Serper API underneath, but it returns a
+# compact ranked digest rather than the raw JSON payload, and it degrades to an
+# "ERROR: ..." observation instead of raising — this is the crew's final task,
+# so a search outage must not sink a run that has already tailored the resume.
 interview_preparer = Agent(
     role="Engineering Interview Preparer",
     goal="Create interview questions and talking points "
-         "based on the resume and job requirements",
-    tools=[scrape_tool, search_tool, read_resume, semantic_search_resume],
+         "based on the resume, job requirements, and current research on the "
+         "company's interview process",
+    tools=[web_search, scrape_tool, read_resume, semantic_search_resume],
     llm=gemini_llm,
     verbose=True,
     max_iter=8,
@@ -284,7 +212,14 @@ interview_preparer = Agent(
         "interviews. With your ability to formulate key questions "
         "and talking points, you prepare candidates for success, "
         "ensuring they can confidently address all aspects of the "
-        "job they are applying for."
+        "job they are applying for. You never rely on memory for what a "
+        "company's hiring process looks like: you use the web_search tool to "
+        "research the employer's actual interview rounds, formats, and "
+        "recurring questions for the role, and you research the technologies "
+        "in the job description that the candidate will be probed on. You "
+        "attribute anything you learn from the web to the source you found it "
+        "in, and when a search returns nothing useful you say so plainly "
+        "rather than inventing a plausible-sounding interview process."
     )
 )
 

@@ -30,7 +30,7 @@ backend/
 │   │   │   └── __main__.py     #   CLI: python -m app.services.crew
 │   │   └── extractors/
 │   │       ├── linkedin_extractor.py  # Bright Data MCP → JobDetails
-│   │       └── github_extractor.py    # GitHub → BigQuery vector store (RAG)
+│   │       └── github_extractor.py    # GitHub → Weaviate vector store (RAG)
 │   ├── models/                 # SQLAlchemy ORM models
 │   ├── schemas/                # Pydantic request/response schemas
 │   └── main.py                 # FastAPI app init, CORS, router registration

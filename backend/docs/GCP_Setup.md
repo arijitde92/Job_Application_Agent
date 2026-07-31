@@ -2,16 +2,21 @@
 
 This guide details the steps required to configure Google Cloud Platform (GCP) for the **Job Application Agent** project. The project relies on:
 
-- **Google BigQuery** — vector database for GitHub repo embeddings
-- **Vertex AI** — semantic embedding model (`text-embedding-005`)
 - **Cloud SQL for MySQL** — relational database for user accounts, resumes, and job records
 - **Cloud Storage (GCS)** — file storage for uploaded and tailored resumes
+
+> **The GitHub RAG pipeline no longer uses GCP.** Repo embeddings moved from
+> BigQuery + Vertex `text-embedding-005` to **Weaviate Cloud** + **Voyage AI**
+> (`voyage-code-3` embeddings, `rerank-2.5-lite` reranking). No BigQuery
+> dataset, BigQuery API, or Vertex AI access is required. Configure
+> `WEAVIATE_URL` / `WEAVIATE_API_KEY` / `VOYAGE_API_KEY` instead — see
+> `.env.example`.
 
 ---
 
 ## 1. Prerequisites
 - A Google Cloud account. If you do not have one, sign up at [cloud.google.com](https://cloud.google.com/).
-- A billing account linked to your GCP account (BigQuery and Vertex AI require an active billing account, though they offer free tiers/credits).
+- A billing account linked to your GCP account (Cloud SQL and Cloud Storage require an active billing account, though they offer free tiers/credits).
 - `gcloud` CLI installed and authenticated: `gcloud auth login`
 
 ---
@@ -31,34 +36,27 @@ Navigate to **APIs & Services > Library** and enable all of the following:
 
 | API | Purpose |
 |-----|---------|
-| **Vertex AI API** | Semantic embeddings for GitHub repos |
-| **BigQuery API** | Vector store for repo content |
 | **Cloud SQL Admin API** | Managed MySQL database |
 | **Cloud Storage API** | Resume file storage |
-| **Cloud SQL Admin API** | SQL instance management |
 
 ```bash
 # Enable all required APIs via CLI
-gcloud services enable aiplatform.googleapis.com \
-    bigquery.googleapis.com \
-    sqladmin.googleapis.com \
+gcloud services enable sqladmin.googleapis.com \
     storage.googleapis.com \
     --project=YOUR_PROJECT_ID
 ```
 
 ---
 
-## 4. Set Up BigQuery Dataset
-The system will store GitHub repo embeddings in BigQuery. Each user gets their own dataset (automatically named from their email).
+## 4. Vector Store (no GCP resources needed)
 
-1. Navigate to **BigQuery** from the GCP Console sidebar.
-2. In the Explorer pane, click the three dots (`⋮`) next to your Project ID and select **Create dataset**.
-3. Fill in the dataset details:
-   - **Dataset ID:** `job_applier_app` (default dataset; user-specific ones are auto-created at runtime).
-   - **Data location:** `asia-south2` (must match `GCP_LOCATION` in `.env`).
-4. Leave other settings as default and click **Create dataset**.
+GitHub repo embeddings live in **Weaviate Cloud**, not BigQuery. Create a free
+sandbox cluster at [console.weaviate.cloud](https://console.weaviate.cloud/),
+copy its REST endpoint and an API key into `WEAVIATE_URL` / `WEAVIATE_API_KEY`,
+and get a `VOYAGE_API_KEY` from [voyageai.com](https://www.voyageai.com/).
 
-> **Note:** User-specific datasets (e.g., `yourname_gmail_com_github_bq_db`) are created automatically at runtime by the web app. You only need to create the default dataset here.
+The collection (`GithubRepoData`) is created automatically on first ingestion —
+there is nothing to provision by hand.
 
 ---
 
@@ -141,12 +139,6 @@ gcloud iam service-accounts create job-agent-sa \
 SA_EMAIL="job-agent-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com"
 
 gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-  --member="serviceAccount:$SA_EMAIL" --role="roles/bigquery.admin"
-
-gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-  --member="serviceAccount:$SA_EMAIL" --role="roles/aiplatform.user"
-
-gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
   --member="serviceAccount:$SA_EMAIL" --role="roles/cloudsql.client"
 
 gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
@@ -187,8 +179,15 @@ GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
 GCP_PROJECT_ID=your-unique-project-id
 
 GCP_LOCATION=asia-south2
-GCP_DATASET_NAME=job_applier_app
-GCP_TABLE_NAME=github_repo_data
+
+# ── Vector store (Weaviate Cloud + Voyage AI, not GCP) ─────────────
+WEAVIATE_URL=your-cluster.c0.region.gcp.weaviate.cloud
+WEAVIATE_API_KEY=YOUR_WEAVIATE_API_KEY
+WEAVIATE_COLLECTION_NAME=GithubRepoData
+VOYAGE_API_KEY=YOUR_VOYAGE_API_KEY
+VOYAGE_EMBED_MODEL=voyage-code-3
+VOYAGE_EMBED_DIMENSION=1024
+VOYAGE_RERANK_MODEL=rerank-2.5-lite
 
 # ── Cloud SQL MySQL ────────────────────────────────────────────────
 MYSQL_HOST=127.0.0.1          # Use 127.0.0.1 when Cloud SQL Auth Proxy is running
@@ -223,10 +222,8 @@ SERPER_API_KEY=...
 
 ### Existing (CLI pipeline)
 - [ ] GCP Project Created
-- [ ] Vertex AI API Enabled
-- [ ] BigQuery API Enabled
-- [ ] BigQuery Dataset Created (`job_applier_app`, region `asia-south2`)
-- [ ] Service Account created with roles: `BigQuery Admin`, `Vertex AI User`
+- [ ] Weaviate Cloud cluster created → `WEAVIATE_URL` / `WEAVIATE_API_KEY` set
+- [ ] Voyage AI API key obtained → `VOYAGE_API_KEY` set
 - [ ] Service Account JSON key downloaded → path set in `GOOGLE_APPLICATION_CREDENTIALS`
 
 ### New (Web App)
