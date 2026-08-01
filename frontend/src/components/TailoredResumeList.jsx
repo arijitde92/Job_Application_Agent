@@ -44,10 +44,12 @@ export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh, o
         ? `/jobs/${jobId}/resume/download`
         : `/jobs/${jobId}/interview/download`;
       const res = await api.get(url, { responseType: 'blob' });
-      const blob = new Blob([res.data], { type: 'text/markdown' });
+      // The tailored resume may be .docx (or .md as fallback) — take the type
+      // and filename from the server instead of assuming markdown.
+      const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = res.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || `${type}.md`;
+      link.download = res.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || type;
       link.click();
       URL.revokeObjectURL(link.href);
     } catch (err) {

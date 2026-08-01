@@ -6,6 +6,8 @@ downloading tailored resumes and interview materials.
 """
 
 import asyncio
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select, update
@@ -15,7 +17,7 @@ from app.api.deps import get_db
 from app.models import User, Job, GithubProfile, Resume
 from app.schemas import TailorJobRequest, JobResponse, JobDetailResponse
 from app.api.deps import get_current_user
-from app.services.gcs_service import download_file, delete_file
+from app.services.gcs_service import _RESUME_CONTENT_TYPES, download_file, delete_file
 from app.services.crew_runner import run_crew_for_job, progress_store
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -118,8 +120,15 @@ async def delete_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    # Best-effort cleanup of GCS artifacts; missing files should not block deletion.
-    for gcs_path in (job.tailored_resume_gcs_path, job.interview_materials_gcs_path):
+    # Best-effort cleanup of GCS artifacts; missing files should not block
+    # deletion. A set — on md-fallback jobs tailored_resume_gcs_path and
+    # tailored_resume_md_gcs_path are the same blob.
+    for gcs_path in {
+        job.tailored_resume_gcs_path,
+        job.tailored_resume_md_gcs_path,
+        job.tailored_resume_pdf_gcs_path,
+        job.interview_materials_gcs_path,
+    }:
         if gcs_path:
             try:
                 delete_file(gcs_path)
@@ -231,7 +240,8 @@ async def download_tailored_resume(
     job_id: int, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download the tailored resume .md file."""
+    """Download the tailored resume — the generated .docx when the document
+    service succeeded, otherwise the Markdown file."""
     result = await db.execute(
         select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
     )
@@ -241,9 +251,64 @@ async def download_tailored_resume(
     if not job.tailored_resume_gcs_path:
         raise HTTPException(status_code=404, detail="Tailored resume not available yet.")
     content = download_file(job.tailored_resume_gcs_path)
-    fname = f"{(job.company_name or 'tailored')}_{(job.job_name or 'resume')}_resume.md".replace(" ", "_")
-    return Response(content=content, media_type="text/markdown",
+    suffix = Path(job.tailored_resume_gcs_path).suffix.lower() or ".md"
+    media_type = _RESUME_CONTENT_TYPES.get(suffix, "application/octet-stream")
+    fname = (
+        f"{(job.company_name or 'tailored')}_{(job.job_name or 'resume')}"
+        f"_resume{suffix}"
+    ).replace(" ", "_")
+    return Response(content=content, media_type=media_type,
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.get("/{job_id}/resume/pdf")
+async def get_tailored_resume_pdf(
+    job_id: int, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve the PDF version of the tailored resume for in-browser viewing."""
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if not job.tailored_resume_pdf_gcs_path:
+        raise HTTPException(status_code=404, detail="PDF version not available.")
+    content = download_file(job.tailored_resume_pdf_gcs_path)
+    fname = Path(job.tailored_resume_pdf_gcs_path).name
+    return Response(content=content, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+
+@router.get("/{job_id}/resume/content")
+async def get_tailored_resume_content(
+    job_id: int, current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the tailored resume's Markdown content for in-browser viewing.
+
+    Sourced from the always-uploaded Markdown artifact; for pre-docx-feature
+    jobs it falls back to tailored_resume_gcs_path when that is a .md file.
+    """
+    result = await db.execute(
+        select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    md_path = job.tailored_resume_md_gcs_path
+    if not md_path and job.tailored_resume_gcs_path and \
+            job.tailored_resume_gcs_path.lower().endswith(".md"):
+        md_path = job.tailored_resume_gcs_path
+    if not md_path:
+        raise HTTPException(status_code=404, detail="Tailored resume not available yet.")
+    content = download_file(md_path)
+    return {
+        "content": content.decode("utf-8"), "job_name": job.job_name,
+        "company_name": job.company_name,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+    }
 
 
 @router.get("/{job_id}/interview/download")

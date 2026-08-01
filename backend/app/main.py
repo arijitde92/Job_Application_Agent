@@ -43,6 +43,23 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001 — never let migration break startup
             logger.warning("Startup parsed_resume_path migration skipped: %s", exc)
 
+        # Same lightweight-migration policy: add the jobs columns for the
+        # docx/pdf tailored-resume artifacts (written by the crew runner) if
+        # they are missing. Idempotent and best-effort.
+        try:
+            def _add_tailored_artifact_columns(sync_conn):
+                from sqlalchemy import inspect, text
+                columns = {c["name"] for c in inspect(sync_conn).get_columns("jobs")}
+                for column in ("tailored_resume_md_gcs_path", "tailored_resume_pdf_gcs_path"):
+                    if column not in columns:
+                        sync_conn.execute(text(
+                            f"ALTER TABLE jobs ADD COLUMN {column} VARCHAR(500) NULL"
+                        ))
+                        logger.info("Added jobs.%s column", column)
+            await conn.run_sync(_add_tailored_artifact_columns)
+        except Exception as exc:  # noqa: BLE001 — never let migration break startup
+            logger.warning("Startup tailored-artifact-columns migration skipped: %s", exc)
+
         # Best-effort: fail jobs left pending/processing for >3h (orphaned by a
         # prior restart). Reuses THIS connection — no new session/checkout — and
         # swallows all errors so it can never abort startup or kill the proxy.

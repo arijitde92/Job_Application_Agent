@@ -10,6 +10,10 @@ from app.services.crew.agents import (
     resume_strategist,
     semantic_search_resume,
 )
+from app.services.crew.docx_tools import (
+    ResumeDocxContext,
+    make_generate_resume_docx_tool,
+)
 from app.services.crew.github_tools import (
     GithubIndexContext,
     make_extract_github_repos_tool,
@@ -77,6 +81,59 @@ _RESUME_NO_GITHUB_CLAUSE = (
     "job_description and requirements above, to:\n"
     "DO NOT add any experience, projects, or skills that are not already present "
     "in the applicant profile / original resume. Rephrase and reorder for fit only.\n"
+)
+
+# Resume Strategist — the .docx generation step, appended to the task
+# description only when a ResumeDocxContext is provided (the web app). The
+# standalone CLI builds no context, gets no generate_resume_docx tool, and
+# must not be instructed to call one.
+#
+# NOTE: CrewAI interpolates bare {identifier} tokens in descriptions — every
+# brace in the JSON template below is followed by a quote, another brace, or
+# whitespace so none of them interpolate. Never add a bare {word} token here.
+_RESUME_DOCX_STEP = (
+    "\nAfter the tailored content is ready, render it as a polished Word "
+    "document:\n"
+    "  1. Build ONE compact JSON object (single line, no markdown fences, no "
+    "comments, no trailing commas) containing ONLY the tailored resume "
+    "content, with EXACTLY these top-level keys — omit any section the "
+    "applicant has no content for:\n"
+    "{\n"
+    "  \"personal_information\": {\"name\": \"\", \"location\": \"\", "
+    "\"email\": \"\", \"phone\": \"\", \"github\": \"\", \"linkedin\": \"\"},\n"
+    "  \"summary\": \"\",\n"
+    "  \"experience\": [{\"job_title\": \"\", \"company\": \"\", "
+    "\"location\": \"\", \"work_mode\": \"\", \"start_date\": \"\", "
+    "\"end_date\": \"\", \"bullets\": [\"\"]}],\n"
+    "  \"education\": [{\"degree\": \"\", \"institution\": \"\", "
+    "\"location\": \"\", \"gpa\": \"\", \"start_date\": \"\", "
+    "\"end_date\": \"\"}],\n"
+    "  \"skills\": [{\"category\": \"\", \"skills\": [\"\"]}],\n"
+    "  \"publications\": [{\"citation\": \"\"}],\n"
+    "  \"projects\": [{\"name\": \"\", \"url\": \"\", \"bullets\": [\"\"]}],\n"
+    "  \"certifications\": [{\"name\": \"\", \"issuer\": \"\", \"year\": \"\", "
+    "\"url\": \"\"}]\n"
+    "}\n"
+    "     Rules for this JSON:\n"
+    "  - It carries the TAILORED content (the reworked summary and the "
+    "reordered, keyword-aligned bullets), not the original resume verbatim.\n"
+    "  - \"skills\" is a LIST of category objects. The parsed-resume JSON "
+    "stores skills as a dictionary mapping category names to skill lists — "
+    "convert EACH dictionary entry into one list item whose \"category\" is "
+    "the key and whose \"skills\" is the value.\n"
+    "  - **bold** markers are allowed inside bullet strings to highlight key "
+    "technologies.\n"
+    "  - Use short uppercase month-year dates as shown on the resume (e.g. "
+    "\"SEP 2025\") and \"PRESENT\" as the end_date of the current position.\n"
+    "  2. Call the generate_resume_docx tool with that JSON as its "
+    "resume_json argument. The metadata envelope (template, page size, "
+    "document name, section order) is added automatically — do NOT include "
+    "it.\n"
+    "  3. If the tool returns an ERROR, fix the reported problem and call it "
+    "again — you have at most 3 attempts in total. After a SUCCESS, or an "
+    "ERROR that tells you to stop, do NOT call the tool again.\n"
+    "Whether or not the .docx was generated, your final answer MUST be the "
+    "complete tailored resume in Markdown.\n"
 )
 
 
@@ -332,27 +389,57 @@ def _profile_task(
     )
 
 
-def _resume_strategy_task(include_github: bool, profile_task: Task) -> Task:
-    """Resume strategy task — tailor the resume to the job."""
+def _resume_strategy_task(
+    include_github: bool,
+    profile_task: Task,
+    analysis_task: Task,
+    docx_ctx: ResumeDocxContext | None = None,
+) -> Task:
+    """
+    Resume strategy task — tailor the resume to the job and, when a
+    ``docx_ctx`` is provided (the web app), render it as a .docx via the
+    per-run generate_resume_docx tool. The final answer is ALWAYS the tailored
+    resume in Markdown — it feeds the interview task's context and is the
+    fallback artifact when the document service is unavailable.
+
+    ``analysis_task`` is listed in the context so the strategist receives the
+    parsed-resume JSON — the authoritative source for personal information,
+    education, publications, and certifications in the .docx payload.
+    """
     clause = _RESUME_GITHUB_CLAUSE if include_github else _RESUME_NO_GITHUB_CLAUSE
+    description = (
+        "Tailor the applicant's resume to maximise its fit for the target role.\n\n"
+        "Job details (use for ATS keyword alignment):\n{job_details_json}\n\n"
+        + clause +
+        "  - Update every resume section (summary, work experience, skills, education).\n"
+        "  - Embed relevant keywords from the job description for ATS optimisation.\n"
+        "  - Quantify achievements with practical, believable numbers where appropriate.\n"
+        "  - Ensure the resume catches the recruiter's eye at first glance.\n"
+        "The parsed-resume JSON from the resume analysis task (in your context) "
+        "is the authoritative source for personal information, education dates "
+        "and institutions, publications, and certifications — copy those facts "
+        "exactly and never invent contact details or URLs.\n"
+    )
+    expected_output = (
+        "An updated resume in Markdown format that effectively highlights the "
+        "candidate's qualifications and experiences most relevant to the "
+        "target role."
+    )
+    tools = [read_resume, semantic_search_resume]
+    if docx_ctx is not None:
+        description += _RESUME_DOCX_STEP
+        expected_output += (
+            " When the document service is available, a polished .docx version "
+            "has also been generated via the generate_resume_docx tool."
+        )
+        tools.append(make_generate_resume_docx_tool(docx_ctx))
     return Task(
-        description=(
-            "Tailor the applicant's resume to maximise its fit for the target role.\n\n"
-            "Job details (use for ATS keyword alignment):\n{job_details_json}\n\n"
-            + clause +
-            "  - Update every resume section (summary, work experience, skills, education).\n"
-            "  - Embed relevant keywords from the job description for ATS optimisation.\n"
-            "  - Quantify achievements with practical, believable numbers where appropriate.\n"
-            "  - Ensure the resume catches the recruiter's eye at first glance."
-        ),
-        expected_output=(
-            "An updated resume in Markdown format that effectively highlights the candidate's "
-            "qualifications and experiences most relevant to the target role."
-        ),
+        description=description,
+        expected_output=expected_output,
         output_file="{applicant_name}_{company_name}_{job_name}_resume.md",
-        context=[profile_task],
+        context=[profile_task, analysis_task],
         agent=resume_strategist,
-        tools=[read_resume, semantic_search_resume],
+        tools=tools,
         markdown=True,
         async_execution=False,
     )
@@ -374,32 +461,80 @@ def _interview_preparation_task(profile_task: Task, resume_task: Task) -> Task:
             "  If a search returns an \"ERROR: ...\" string, or the results are irrelevant, "
             "do NOT retry it more than once — carry on with the resume and job details "
             "alone and note in your output that live research was unavailable.\n\n"
-            "Step 2 — Build the materials:\n"
+            "Step 2 — Identify the four question categories:\n"
+            "  Read the job_description and requirements above and pin down:\n"
+            "    A. The MAJOR programming language of the role (the one the candidate will "
+            "actually write day to day).\n"
+            "    B. The MAJOR database language and/or data framework named in the job "
+            "description (e.g. SQL/PostgreSQL, MongoDB, Redis, an ORM, Spark). If the job "
+            "description names none, skip this category.\n"
+            "    C. Cloud computing, DevOps and CI/CD — scoped to the specific cloud "
+            "provider and tooling named in the job description (e.g. AWS, GCP, Azure, "
+            "Docker, Kubernetes, Terraform, GitHub Actions). If no provider is named, ask "
+            "generic cloud/DevOps/CI-CD questions.\n"
+            "    D. The MAJOR technology or framework the role requires (e.g. React, "
+            "FastAPI, Spring Boot, PyTorch, Kafka, LangChain/CrewAI).\n"
+            "  Name the concrete technology you chose for each category at the top of the "
+            "section, so the candidate knows what is being tested. If a category has no "
+            "match in the job description, say so and redistribute its questions across "
+            "the remaining categories — the totals below are fixed.\n\n"
+            "Step 3 — Write the technical question bank:\n"
+            "  Produce EXACTLY 10 conceptual questions and EXACTLY 10 scenario-based "
+            "questions (20 in total), spread across the four categories above — aim for "
+            "2-3 conceptual and 2-3 scenario questions per category, weighted towards the "
+            "technologies the job description emphasises most.\n"
+            "  - Conceptual questions probe understanding: how something works, why one "
+            "approach is chosen over another, trade-offs, internals, common pitfalls.\n"
+            "  - Scenario-based questions put the candidate in a concrete situation — a "
+            "production incident, a design decision, a slow query, a failing pipeline, a "
+            "scaling or migration problem — and ask what they would do.\n"
+            "  - Pitch the difficulty at the seniority_level from the job details.\n"
+            "  - Every question is followed immediately by its answer.\n\n"
+            "  ANSWER STYLE (strict):\n"
+            "  - Keep answers BRIEF — 2-4 sentences, or 3-5 short bullets. No essays, no "
+            "long descriptive prose, no restating the question.\n"
+            "  - Lead with the direct answer, then at most one line of justification.\n"
+            "  - Add a SHORT fenced code snippet (roughly 10 lines or fewer) ONLY when code "
+            "explains it faster than words — a query, a config fragment, a CLI command, a "
+            "small function. Skip the snippet when prose is enough.\n"
+            "  - Label each question with its category and whether it is conceptual or "
+            "scenario-based.\n\n"
+            "Step 4 — Build the rest of the materials:\n"
             "  Use the tailored resume from the resume strategy task, the profile from the "
             "profile task, and your research to:\n"
-            "  - Generate likely interview questions based on the job_description, the "
-            "requirements, and the company's actual interview process where you found it.\n"
+            "  - Add behavioural and role-fit questions drawn from the company's actual "
+            "interview process where you found it in Step 1.\n"
             "  - Prepare concise talking points that highlight how the applicant's experience "
             "matches each key requirement.\n"
             "  - Help the candidate confidently address all aspects of the role.\n\n"
             "Grounding rules:\n"
             "  - Every talking point must be traceable to the applicant's profile or "
             "tailored resume. Do NOT invent experience, projects, metrics, or skills.\n"
+            "  - The 20 technical questions are about the TECHNOLOGIES in the job "
+            "description, not about the applicant — they may cover topics the applicant's "
+            "resume does not mention, but they must never assert that the applicant has "
+            "used something.\n"
             "  - Keep the two sources separate: anything taken from the web is research "
             "about the EMPLOYER, never a claim about the applicant.\n"
             "  - Cite the source URL for any specific claim about the company's interview "
             "process, and do NOT present an unsourced guess as something you found."
         ),
         expected_output=(
-            "A document containing key interview questions and tailored talking points that "
-            "help the candidate demonstrate how their skills and experience match the role, "
-            "including a short section on the company's interview process and recent context "
-            "gathered via web_search, with source URLs (or an explicit note that live "
-            "research was unavailable)."
+            "A Markdown document containing: (1) a technical question bank of EXACTLY 10 "
+            "conceptual and EXACTLY 10 scenario-based questions covering the job's major "
+            "programming language, database language/framework, cloud-DevOps-CI/CD stack, "
+            "and major technology/framework — each question labelled with its category and "
+            "type and followed by a brief 2-4 sentence (or 3-5 bullet) answer, with a short "
+            "code snippet only where it aids the explanation; (2) tailored talking points "
+            "that help the candidate demonstrate how their skills and experience match the "
+            "role; and (3) a short section on the company's interview process and recent "
+            "context gathered via web_search, with source URLs (or an explicit note that "
+            "live research was unavailable)."
         ),
         output_file="interview_materials.md",
         context=[profile_task, resume_task],
         agent=interview_preparer,
+        markdown=True,
         async_execution=False,
     )
 
@@ -408,6 +543,7 @@ def build_tasks(
     include_github: bool = True,
     resume_ctx: ResumeAnalysisContext | None = None,
     github_ctx: GithubIndexContext | None = None,
+    docx_ctx: ResumeDocxContext | None = None,
 ) -> list[Task]:
     """
     Construct a fresh, correctly-wired task list for one crew run.
@@ -432,6 +568,11 @@ def build_tasks(
     vector-store search is scoped by it (an unscoped search would span every
     indexed applicant's repositories).
 
+    ``docx_ctx`` carries the job identity and output path for the resume
+    strategist's generate_resume_docx tool. When None (standalone CLI), the
+    tool is not attached and the strategist produces the Markdown resume only
+    — exactly the pre-docx behavior.
+
     Return order is stable across both modes: the interview task is always the
     last element and the resume task always the second-to-last, so the runner
     can stamp per-request ``output_file`` paths via ``crew.tasks[-1]/[-2]``.
@@ -449,7 +590,7 @@ def build_tasks(
     github_task = _github_summary_task(github_ctx) if include_github else None
     analysis = _resume_analysis_task(resume_ctx)
     profile = _profile_task(include_github, github_task, analysis)
-    resume = _resume_strategy_task(include_github, profile)
+    resume = _resume_strategy_task(include_github, profile, analysis, docx_ctx)
     interview = _interview_preparation_task(profile, resume)
 
     tasks = [analysis, profile, resume, interview]

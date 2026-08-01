@@ -23,6 +23,7 @@ from app.services.crew.agents import (
     resume_strategist,
     interview_preparer,
 )
+from app.services.crew.docx_tools import ResumeDocxContext
 from app.services.crew.github_tools import GithubIndexContext
 from app.services.crew.resume_tools import ResumeAnalysisContext
 from app.services.crew.tasks import build_tasks
@@ -37,6 +38,7 @@ def build_crew(
     include_github: bool = True,
     resume_ctx: ResumeAnalysisContext | None = None,
     github_ctx: GithubIndexContext | None = None,
+    docx_ctx: ResumeDocxContext | None = None,
 ) -> Crew:
     """
     Construct the job-application :class:`crewai.Crew`.
@@ -62,6 +64,9 @@ def build_crew(
         github_ctx: The applicant's GitHub identity, closured into the indexing
             and search tools so the vector-store search is scoped to their own
             repositories. Required when ``include_github`` is True.
+        docx_ctx: Job identity + output path for the resume strategist's
+            generate_resume_docx tool. When None (standalone CLI), the tool is
+            not attached and the strategist produces the Markdown resume only.
 
     Returns:
         A configured :class:`crewai.Crew` ready for ``kickoff(inputs=...)``.
@@ -69,7 +74,8 @@ def build_crew(
         resume task always second-to-last (``crew.tasks[-1]`` / ``[-2]``).
     """
     tasks = build_tasks(
-        include_github=include_github, resume_ctx=resume_ctx, github_ctx=github_ctx
+        include_github=include_github, resume_ctx=resume_ctx,
+        github_ctx=github_ctx, docx_ctx=docx_ctx,
     )
 
     agents = [resume_analyzer, profiler, resume_strategist, interview_preparer]

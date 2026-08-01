@@ -173,20 +173,36 @@ profiler = Agent(
 )
 
 # Agent 4: Resume Strategist
+# The per-run generate_resume_docx tool (closured over the job identity and
+# output path, see app.services.crew.docx_tools) is attached at the Task level
+# by build_tasks(), keeping this module-level singleton thread-safe across
+# concurrent crew runs. max_iter leaves headroom for up to 3 docx attempts on
+# top of the read/search calls and the final Markdown answer.
 resume_strategist = Agent(
     role="Resume Strategist for Engineers",
-    goal="Find all the best ways to make a resume stand out in the job market.",
+    goal=(
+        "Find all the best ways to make a resume stand out in the job market, "
+        "and deliver it as a polished, professionally formatted .docx document "
+        "via the document-generation service."
+    ),
     tools=[scrape_tool, search_tool, read_resume, semantic_search_resume],
     llm=gemini_llm,
     verbose=True,
-    max_iter=8,
+    max_iter=10,
     max_rpm=10,
     respect_context_window=True,
     backstory=(
         "With a strategic mind and an eye for detail, you "
         "excel at refining resumes to highlight the most "
         "relevant skills and experiences, ensuring they "
-        "resonate perfectly with the job's requirements."
+        "resonate perfectly with the job's requirements. "
+        "Once the tailored content is ready, you assemble it into a structured "
+        "resume JSON and call the generate_resume_docx tool to render a "
+        "polished Word document. When the tool reports an ERROR you fix the "
+        "input and try again, but never more than 3 attempts in total; if the "
+        "service stays unavailable you fall back gracefully. Whether or not "
+        "the .docx was generated, your final answer is always the complete "
+        "tailored resume in Markdown."
     )
 )
 

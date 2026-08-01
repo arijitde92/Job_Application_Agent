@@ -7,7 +7,9 @@ signed URLs for resume and interview material files.
 Bucket structure:
     gs://<bucket>/uploads/<user_id>/<filename>           — User-uploaded original resumes (.md/.pdf/.docx)
     gs://<bucket>/parsed/<user_id>/<name>_<user_id>_<resume_id>_parsed_resume.json — Agent-parsed resume JSON
-    gs://<bucket>/tailored/<user_id>/<job_id>_resume.md  — Agent-generated tailored resumes
+    gs://<bucket>/tailored/<user_id>/<job_id>_resume.md  — Tailored resume, Markdown (always)
+    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.docx — Tailored resume, Word (when the docx service succeeded)
+    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.pdf  — Tailored resume, PDF (when docx→pdf conversion succeeded)
     gs://<bucket>/tailored/<user_id>/<job_id>_interview.md — Agent-generated interview materials
 """
 
@@ -96,23 +98,30 @@ def upload_parsed_resume(user_id: int, filename: str, content: str) -> str:
     return f"gs://{settings.GCS_BUCKET_NAME}/{blob_path}"
 
 
-def upload_tailored_resume(user_id: int, job_id: int, content: str, filename: str) -> str:
+def upload_tailored_resume(
+    user_id: int, job_id: int, content: str | bytes, filename: str
+) -> str:
     """
-    Upload an agent-generated tailored resume to GCS.
+    Upload an agent-generated tailored resume artifact to GCS.
 
     Args:
         user_id: The user's database ID.
         job_id: The job record ID.
-        content: Markdown content of the tailored resume.
-        filename: Desired filename.
+        content: The artifact — Markdown text, or the raw bytes of a
+            generated .docx/.pdf.
+        filename: Desired filename; its suffix picks the content type.
 
     Returns:
         The GCS path.
     """
+    data = content.encode("utf-8") if isinstance(content, str) else content
+    content_type = _RESUME_CONTENT_TYPES.get(
+        Path(filename).suffix.lower(), "application/octet-stream"
+    )
     blob_path = f"tailored/{user_id}/{job_id}_{filename}"
     bucket = _get_bucket()
     blob = bucket.blob(blob_path)
-    blob.upload_from_string(content.encode("utf-8"), content_type="text/markdown")
+    blob.upload_from_string(data, content_type=content_type)
 
     return f"gs://{settings.GCS_BUCKET_NAME}/{blob_path}"
 

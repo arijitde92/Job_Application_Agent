@@ -98,8 +98,16 @@ class Job(Base):
     job_description = Column(Text, nullable=True)
     requirements = Column(Text, nullable=True)
 
-    # Output paths
+    # Output paths. Three tailored-resume artifacts:
+    #   - tailored_resume_gcs_path: the DOWNLOAD target — the generated .docx
+    #     when the document service succeeded, otherwise the Markdown file.
+    #   - tailored_resume_md_gcs_path: the Markdown version, always uploaded;
+    #     the in-browser preview's fallback when no PDF exists.
+    #   - tailored_resume_pdf_gcs_path: the PDF rendered from the .docx for the
+    #     in-browser viewer; NULL when the docx or its conversion failed.
     tailored_resume_gcs_path = Column(String(500), nullable=True)
+    tailored_resume_md_gcs_path = Column(String(500), nullable=True)
+    tailored_resume_pdf_gcs_path = Column(String(500), nullable=True)
     interview_materials_gcs_path = Column(String(500), nullable=True)
 
     # Status tracking

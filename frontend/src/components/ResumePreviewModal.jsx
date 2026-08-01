@@ -5,20 +5,36 @@ import remarkGfm from 'remark-gfm';
 import api from '../services/api';
 import { FiX } from 'react-icons/fi';
 
-export default function ResumePreviewModal({ jobId, resumeId, onClose }) {
+export default function ResumePreviewModal({ jobId, resumeId, hasPdf = false, onClose }) {
   const [content, setContent] = useState('');
+  const [pdfUrl, setPdfUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('Resume Preview');
 
   useEffect(() => {
+    let objectUrl = null;
+    const fetchMarkdown = async () => {
+      const res = await api.get(`/jobs/${jobId}/resume/content`);
+      setContent(res.data.content);
+    };
     const fetchContent = async () => {
       setLoading(true);
       try {
         if (jobId) {
-          // Preview tailored resume from a job
-          const res = await api.get(`/jobs/${jobId}/resume/download`, { responseType: 'text' });
-          setContent(typeof res.data === 'string' ? res.data : new TextDecoder().decode(res.data));
           setTitle('Tailored Resume');
+          if (hasPdf) {
+            // Render the generated PDF in-browser; fall back to the markdown
+            // view on any failure (e.g. a stale jobs list claiming a PDF).
+            try {
+              const res = await api.get(`/jobs/${jobId}/resume/pdf`, { responseType: 'blob' });
+              objectUrl = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+              setPdfUrl(objectUrl);
+            } catch {
+              await fetchMarkdown();
+            }
+          } else {
+            await fetchMarkdown();
+          }
         } else if (resumeId) {
           // Preview uploaded resume
           const res = await api.get(`/resumes/${resumeId}/content`);
@@ -32,7 +48,8 @@ export default function ResumePreviewModal({ jobId, resumeId, onClose }) {
       }
     };
     fetchContent();
-  }, [jobId, resumeId]);
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [jobId, resumeId, hasPdf]);
 
   return createPortal(
     <div className="modal-overlay" onClick={onClose}>
@@ -45,6 +62,12 @@ export default function ResumePreviewModal({ jobId, resumeId, onClose }) {
           <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--space-12)' }}>
             <div className="spinner" style={{ width: 32, height: 32 }} />
           </div>
+        ) : pdfUrl ? (
+          <iframe
+            src={pdfUrl}
+            title="Tailored Resume PDF"
+            style={{ width: '100%', height: '70vh', border: 'none', borderRadius: 'var(--radius-md, 8px)' }}
+          />
         ) : (
           <div className="markdown-content">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>

@@ -107,22 +107,33 @@ def _run_crew_sync(
         f.write(resume_text)
         resume_path = f.name
 
+    # Initialized before the try so the cleanup in `finally` can reference
+    # them even when the crew build fails before they are assigned.
+    docx_output = None
+    pdf_output = None
+
     try:
         # Step 4: Build crew and run
         _update_progress(job_id, "building_profile")
 
         from app.services.crew.crew import build_crew
+        from app.services.crew.docx_tools import (
+            ResumeDocxContext,
+            build_docx_filename,
+        )
         from app.services.crew.github_tools import (
             GithubIndexContext,
             github_username_from_url,
         )
         from app.services.crew.resume_tools import ResumeAnalysisContext
+        from app.services.docx_to_pdf import convert_docx_to_pdf
 
         applicant_name = user_email.split("@")[0].replace(".", "_")
 
         # Build output paths for this job
         resume_output = tempfile.mktemp(suffix="_resume.md", prefix=f"job{job_id}_")
         interview_output = tempfile.mktemp(suffix="_interview.md", prefix=f"job{job_id}_")
+        docx_output = tempfile.mktemp(suffix="_resume.docx", prefix=f"job{job_id}_")
 
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -149,10 +160,25 @@ def _run_crew_sync(
                 github_username=github_username or github_username_from_url(github_url),
             )
 
+        # Identity + output path for the resume strategist's .docx tool. The
+        # formatted filename ({applicant}_{company}_{job}_resume.docx) names
+        # the GCS blob and the browser download; the temp path is local only.
+        docx_filename = build_docx_filename(
+            applicant_name, job_details.company_name, job_details.job_name
+        )
+        docx_ctx = ResumeDocxContext(
+            applicant_name=applicant_name,
+            company_name=job_details.company_name,
+            job_name=job_details.job_name,
+            job_id=job_id,
+            output_path=docx_output,
+            display_name=user_name or applicant_name,
+        )
+
         crew = build_crew(
             output_log_file=crew_log_path, verbose=True, tracing=False,
             include_github=include_github, resume_ctx=resume_ctx,
-            github_ctx=github_ctx,
+            github_ctx=github_ctx, docx_ctx=docx_ctx,
         )
         logger.info("crew_runner: Crew verbose log → %s", crew_log_path)
 
@@ -196,16 +222,51 @@ def _run_crew_sync(
             with open(interview_output, "r") as f:
                 interview_content = f.read()
 
+        # The strategist's generate_resume_docx tool writes the .docx to
+        # docx_ctx.output_path and records it in ctx.state on success. The
+        # bytes (not the temp paths) go into the result so this thread can
+        # clean up its temps regardless of what the async side does.
+        tailored_resume_docx = None
+        tailored_resume_pdf = None
+        if docx_ctx.state.get("docx_path") and os.path.exists(docx_output):
+            with open(docx_output, "rb") as f:
+                tailored_resume_docx = f.read()
+            logger.info(
+                "crew_runner: .docx resume generated for job %d (%d bytes, %d "
+                "tool attempt(s))",
+                job_id, len(tailored_resume_docx), docx_ctx.state.get("attempts", 0),
+            )
+            pdf_output = convert_docx_to_pdf(docx_output)
+            if pdf_output:
+                with open(pdf_output, "rb") as f:
+                    tailored_resume_pdf = f.read()
+                logger.info("crew_runner: .docx converted to PDF for job %d", job_id)
+            else:
+                logger.warning(
+                    "crew_runner: PDF conversion failed for job %d — the .docx "
+                    "is kept, the in-browser preview will fall back to Markdown",
+                    job_id,
+                )
+        else:
+            logger.info(
+                "crew_runner: no .docx generated for job %d (%d tool attempt(s)) "
+                "— falling back to the Markdown resume",
+                job_id, docx_ctx.state.get("attempts", 0),
+            )
+
         return {
             "tailored_resume": tailored_resume_content,
+            "tailored_resume_docx": tailored_resume_docx,
+            "tailored_resume_pdf": tailored_resume_pdf,
+            "docx_filename": docx_filename,
             "interview_materials": interview_content,
             "job_details": job_details,
         }
 
     finally:
         # Clean up temp files
-        for path in [resume_path, raw_resume_path]:
-            if os.path.exists(path):
+        for path in (resume_path, raw_resume_path, docx_output, pdf_output):
+            if path and os.path.exists(path):
                 os.unlink(path)
 
 
@@ -281,25 +342,57 @@ async def run_crew_for_job(
         # Upload results to GCS
         _update_progress(job_id, "uploading_results")
 
-        tailored_gcs = None
+        md_gcs = None
+        docx_gcs = None
+        pdf_gcs = None
         interview_gcs = None
 
+        # The Markdown resume is always uploaded — it is the preview fallback
+        # and the download target when no .docx was generated.
         if result["tailored_resume"]:
-            tailored_gcs = upload_tailored_resume(
+            md_gcs = upload_tailored_resume(
                 user_id, job_id, result["tailored_resume"], "resume.md"
+            )
+            logger.info(
+                "crew_runner: Tailored resume (md) for job %d stored at %s",
+                job_id, md_gcs,
+            )
+        if result.get("tailored_resume_docx"):
+            docx_gcs = upload_tailored_resume(
+                user_id, job_id, result["tailored_resume_docx"], result["docx_filename"]
+            )
+            logger.info(
+                "crew_runner: Tailored resume (docx) for job %d stored at %s",
+                job_id, docx_gcs,
+            )
+        if result.get("tailored_resume_pdf"):
+            pdf_filename = result["docx_filename"].removesuffix(".docx") + ".pdf"
+            pdf_gcs = upload_tailored_resume(
+                user_id, job_id, result["tailored_resume_pdf"], pdf_filename
+            )
+            logger.info(
+                "crew_runner: Tailored resume (pdf) for job %d stored at %s",
+                job_id, pdf_gcs,
             )
         if result["interview_materials"]:
             interview_gcs = upload_interview_materials(
                 user_id, job_id, result["interview_materials"], "interview.md"
             )
 
-        # Update job record
+        # The download target: the .docx replaces the .md when it exists.
+        tailored_gcs = docx_gcs or md_gcs
+
+        # Update job record. All three tailored-resume columns are set every
+        # run (None when absent) so a retried job never keeps a stale
+        # artifact path from an earlier run.
         async with AsyncSessionLocal() as db:
             from app.models import Job
             await db.execute(
                 update(Job).where(Job.id == job_id).values(
                     status="completed",
                     tailored_resume_gcs_path=tailored_gcs,
+                    tailored_resume_md_gcs_path=md_gcs,
+                    tailored_resume_pdf_gcs_path=pdf_gcs,
                     interview_materials_gcs_path=interview_gcs,
                     completed_at=datetime.utcnow(),
                 )

@@ -315,7 +315,7 @@ if __name__ == "__main__":
     owner, _ = parse_github_url(repo_url)
     process_github_repo_to_vector_store(
         repo_url,
-        file_filter=lambda file_path: file_path.endswith(('.py', '.ipynb', '.md', '.txt')),
+        file_filter=lambda file_path: file_path.endswith(('.py', '.ipynb', '.md', '.txt', '.tsx', '.ts', '.js', '.json', '.yml', '.yaml', '.tf', '.cpp', '.c', '.h', '.java', '.cs', '.rb', '.go', '.rs', '.php', '.html', '.css', '.sh', '.bat', '.ps1', '.pl', '.r', '.jl', '.lua', '.sql', '.mdx', '.toml')),
         access_token=GITHUB_TOKEN
     )
     logger.info(

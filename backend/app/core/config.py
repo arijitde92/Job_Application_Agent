@@ -74,6 +74,19 @@ class Settings(BaseSettings):
         description="Override for Z.ai's OpenAI-compatible base URL; blank uses https://api.z.ai/api/paas/v4",
     )
 
+    # ── Resume DOCX service ───────────────────────────────────────────────
+    RESUME_DOCX_SERVICE_URL: str = Field(
+        default=(
+            "http://resume-service-alb-1115872566.us-east-2.elb.amazonaws.com"
+            "/api/v1/resume/generate"
+        ),
+        description="POST endpoint of the external resume .docx generation service",
+    )
+    RESUME_DOCX_TIMEOUT_SECONDS: int = Field(
+        default=120,
+        description="Read timeout (seconds) for the resume .docx generation service",
+    )
+
     # ── Crew AI ───────────────────────────────────────────────────────────
     CREWAI_TOOLS_ALLOW_UNSAFE_PATHS: bool = Field(default=True, description="Allow CrewAI tools to access unsafe paths")
     CREWAI_TRACING_ENABLED: bool = Field(default=True, description="Enable CrewAI tracing")

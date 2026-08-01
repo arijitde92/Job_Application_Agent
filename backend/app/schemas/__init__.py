@@ -92,6 +92,8 @@ class JobResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     tailored_resume_gcs_path: Optional[str] = None
+    tailored_resume_md_gcs_path: Optional[str] = None
+    tailored_resume_pdf_gcs_path: Optional[str] = None
     interview_materials_gcs_path: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

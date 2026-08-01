@@ -4,6 +4,8 @@ A powerful, multi-agent automation system for job applications, leveraging [Crew
 
 This project also includes a **Full-Stack Web App version** with a **FastAPI backend** (using Google Cloud SQL MySQL and GCS storage) and a **React + Vite frontend** that displays live agent execution progress via Server-Sent Events (SSE).
 
+The final Word (.docx) resume is rendered by a **separate live microservice** deployed on AWS (ECS Fargate behind an ALB) — its source is available at **[arijitde92/resume_docx_generator](https://github.com/arijitde92/resume_docx_generator)**. This backend calls that service over HTTP and converts the returned .docx to PDF locally (LibreOffice headless) for the in-browser preview. See [System Design](#-system-design) for the full picture.
+
 ---
 
 ## 📦 Project Structure
@@ -45,6 +47,7 @@ Job_Application_Agent/
 | **Cloud SQL (MySQL)** | A Cloud SQL MySQL instance (the web app stores users/jobs there). |
 | **[Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/mysql/sql-proxy)** | `cloud-sql-proxy` binary on `PATH` (the `uv run db-proxy` / `uv run dev` commands invoke it). See [Installation](https://docs.cloud.google.com/sql/docs/mysql/connect-instance-auth-proxy) to install|
 | **[Weaviate Cloud](https://console.weaviate.cloud/)** | A cluster for the GitHub repo vector store (the free sandbox tier is enough to start). |
+| **LibreOffice** | Used headless to convert the generated .docx resume to PDF for the in-browser preview: `sudo apt-get install -y libreoffice-writer fonts-liberation`. Optional — without it the .docx is still generated, the preview just falls back to Markdown. See [backend/README.md](backend/README.md#docx-resume-generation--pdf-preview). |
 | **API keys** | GitHub PAT, Bright Data, Gemini, Anthropic, Z.ai, Weaviate, Voyage AI, and Serper. See [API Keys & Cloud Setup](#-api-keys--cloud-setup). |
 
 > **All `uv run` commands are run from the `backend/` directory** — the project
@@ -110,6 +113,7 @@ env-var overrides, and the standalone crew CLI.
 - **Weaviate + Voyage AI:** Stores and semantically searches GitHub project data in a Weaviate vector store, using Voyage AI's code-specialised `voyage-code-3` embeddings and a `rerank-2.5-lite` second-stage reranker.
 - **Structured Resume Parsing:** A dedicated Resume Analyzer agent extracts the resume into a validated JSON schema, deriving years of experience with a deterministic tool rather than LLM arithmetic.
 - **Automated Resume Tailoring:** Aligns your resume with job requirements and optimizes for ATS.
+- **Polished DOCX + PDF Output:** The Resume Strategist sends the tailored content to a **live document-generation microservice** — a separate FastAPI service running on AWS (ECS Fargate behind an ALB) whose source lives at **[arijitde92/resume_docx_generator](https://github.com/arijitde92/resume_docx_generator)** — which renders a professional Word (.docx) resume. The backend then converts that .docx to PDF locally (LibreOffice headless) for in-browser viewing. Up to 3 attempts; on failure the pipeline gracefully falls back to the Markdown resume.
 - **Interview Prep:** Researches the employer on the web, then generates tailored interview questions and talking points.
 - **Purpose-Matched LLMs:** Each agent runs on the model that suits its job — Gemini for synthesis, GLM-5.2 for repo analysis, Claude Sonnet 5 for structured extraction.
 
@@ -154,6 +158,7 @@ env-var overrides, and the standalone crew CLI.
   run whose resume tailoring has already completed.
 - **Weaviate/Voyage AI Integration:** Custom logic to chunk, embed, upsert, and search GitHub repo content — one shared Weaviate collection, with every search scoped to the applicant's own repositories.
 - **Resume Tools:** A `calculate_yoe` tool for deterministic years-of-experience arithmetic and a per-run `save_parsed_resume` tool that validates the JSON against the schema before persisting it.
+- **DOCX Generator (`generate_resume_docx`):** A per-run tool for the Resume Strategist that POSTs the tailored resume JSON to the live document-generation microservice (`POST /api/v1/resume/generate` on [arijitde92/resume_docx_generator](https://github.com/arijitde92/resume_docx_generator)) and saves the returned Word (.docx) resume. The tool wraps the agent's content in the service's metadata envelope deterministically and enforces a 3-attempt retry cap, after which the run falls back to Markdown output.
 
 ---
 
@@ -169,8 +174,150 @@ env-var overrides, and the standalone crew CLI.
 - **Voyage AI** for code-specialised embeddings (`voyage-code-3`) and reranking
   (`rerank-2.5-lite`)
 - **Google Cloud Storage** for resume & generated-output storage
+- **Resume DOCX microservice** — a standalone FastAPI service on AWS ECS Fargate
+  that renders the tailored resume JSON into a Word document
+  ([source](https://github.com/arijitde92/resume_docx_generator)); the backend
+  converts the returned .docx to PDF with **LibreOffice headless**
 - **Bright Data MCP** for LinkedIn job scraping; **LangChain** for document
   loading and chunking
+
+---
+
+## 🧭 System Design
+
+### Component architecture
+
+```mermaid
+flowchart LR
+    User(["👤 User (browser)"])
+
+    subgraph Frontend["React + Vite frontend :5173"]
+        UI["Pages & components<br/>Home · Job list · Resume preview"]
+        SSE["SSE client<br/>live agent progress"]
+    end
+
+    subgraph Backend["FastAPI backend :8000"]
+        API["API routers<br/>/api/auth · /api/resumes<br/>/api/github · /api/jobs"]
+        Runner["crew_runner<br/>ThreadPoolExecutor (4 jobs)<br/>+ progress store"]
+        Crew["CrewAI pipeline<br/>agents · tasks · tools"]
+        PDF["docx_to_pdf<br/>LibreOffice headless"]
+    end
+
+    subgraph GCP["Google Cloud"]
+        SQL[("Cloud SQL MySQL<br/>users · resumes · jobs")]
+        GCS[("Cloud Storage<br/>resumes & outputs")]
+    end
+
+    subgraph External["External services"]
+        BD["Bright Data MCP<br/>LinkedIn scraping"]
+        GH["GitHub API"]
+        WV[("Weaviate Cloud<br/>GithubRepoData")]
+        VOY["Voyage AI<br/>voyage-code-3 · rerank-2.5-lite"]
+        SERP["Serper<br/>web search"]
+        LLM["LLMs<br/>Gemini · GLM-5.2 · Claude Sonnet 5"]
+        DOCX["Resume DOCX microservice<br/>FastAPI on AWS ECS Fargate + ALB<br/>POST /api/v1/resume/generate"]
+    end
+
+    User --> UI
+    UI -->|"REST + JWT / Google OAuth"| API
+    SSE <-->|"text/event-stream"| API
+    API --> Runner --> Crew
+    API <--> SQL
+    API <--> GCS
+    Runner <--> GCS
+    Crew --> BD
+    Crew --> GH
+    Crew <--> WV
+    WV -.->|"embed & rerank"| VOY
+    Crew --> SERP
+    Crew --> LLM
+    Crew -->|"tailored resume JSON"| DOCX
+    DOCX -->|".docx bytes"| Crew
+    Crew --> PDF
+    PDF -->|".docx + .pdf"| GCS
+
+    classDef ext fill:#fff4e6,stroke:#e8a33d,color:#000
+    classDef svc fill:#e6f0ff,stroke:#4a7fd4,color:#000
+    class BD,GH,WV,VOY,SERP,LLM,DOCX ext
+    class SQL,GCS svc
+```
+
+### Agent pipeline (one job run)
+
+```mermaid
+flowchart TD
+    Start(["Job submitted<br/>LinkedIn URL + resume + GitHub URL"]) --> Extract["Extract job details<br/>Bright Data MCP → JobDetails JSON"]
+    Extract --> Parse["Parse resume file<br/>.pdf / .docx / .md → text"]
+
+    Parse --> A1["GitHub Project Summarizer<br/><i>GLM-5.2</i><br/>index repos → Weaviate,<br/>retrieve + rerank relevant projects"]
+    Parse --> A2["Resume Analyzer<br/><i>Claude Sonnet 5</i><br/>resume → validated JSON<br/>(calculate_yoe · save_parsed_resume)"]
+
+    A1 --> A3
+    A2 --> A3
+
+    A3["Profiler<br/><i>Gemini</i><br/>compile personal & professional profile"]
+    A3 --> A4["Resume Strategist<br/><i>Gemini</i><br/>tailor resume · optimise for ATS"]
+
+    A4 --> Tool{"generate_resume_docx<br/>≤ 3 attempts"}
+    Tool -->|"success"| Conv["LibreOffice headless<br/>.docx → .pdf"]
+    Tool -->|"all attempts failed<br/>or LibreOffice missing"| MD["Markdown resume fallback"]
+    Conv --> A5
+    MD --> A5
+
+    A5["Interview Preparer<br/><i>Gemini</i><br/>web_search company research →<br/>questions & talking points"]
+    A5 --> Store["Upload outputs to GCS<br/>update job row in Cloud SQL"]
+    Store --> Done(["Job completed → SSE 'done'"])
+
+    subgraph Parallel["run in parallel"]
+        A1
+        A2
+    end
+
+    style Parallel fill:#f4f4f8,stroke:#bbb
+```
+
+> The GitHub agent and its task are **skipped entirely** when no GitHub profile is
+> supplied; the remaining agents then run under explicit grounding rules.
+
+### Request lifecycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant FE as React frontend
+    participant API as FastAPI (jobs router)
+    participant DB as Cloud SQL
+    participant CR as crew_runner (thread pool)
+    participant CW as CrewAI agents
+    participant MS as DOCX microservice (AWS)
+    participant GCS as Cloud Storage
+
+    U->>FE: Submit job URL + select resume (+ GitHub profile)
+    FE->>API: POST /api/jobs/tailor
+    API->>DB: INSERT job (status=pending)
+    API-->>FE: 201 { job_id }
+    API->>CR: asyncio.create_task(run_crew_for_job)
+    CR->>GCS: Download stored resume bytes
+    FE->>API: GET /api/jobs/{job_id}/progress (SSE)
+
+    loop Each pipeline step
+        CR->>CW: Run next agent/task
+        CW-->>CR: Step result
+        CR->>CR: progress_store[job_id] = step
+        API-->>FE: event: progress { current_step }
+    end
+
+    CW->>MS: POST /api/v1/resume/generate (resume JSON)
+    MS-->>CW: .docx bytes
+    CW->>CR: docx path via ResumeDocxContext.state
+    CR->>CR: convert_docx_to_pdf (LibreOffice)
+    CR->>GCS: Upload .docx, .pdf, interview materials
+    CR->>DB: UPDATE job (status=completed, GCS paths)
+    API-->>FE: event: done
+    FE->>API: GET tailored resume / interview materials
+    API-->>U: PDF preview + .docx download
+```
 
 ---
 
@@ -202,6 +349,12 @@ ANTHROPIC_API_KEY=...            # Resume Analyzer (Claude Sonnet 5)
 ZAI_API_KEY=...                  # GitHub Project Summarizer (GLM-5.2)
 ZAI_BASE_URL=                    # optional override; blank = https://api.z.ai/api/paas/v4
 SERPER_API_KEY=...               # web search (Interview Preparer research)
+
+# ── Resume DOCX generation microservice ──────────────────────────
+# Live service on AWS (ECS Fargate + ALB). Source & self-hosting instructions:
+#   https://github.com/arijitde92/resume_docx_generator
+RESUME_DOCX_SERVICE_URL=http://resume-service-alb-1115872566.us-east-2.elb.amazonaws.com/api/v1/resume/generate
+RESUME_DOCX_TIMEOUT_SECONDS=120
 
 # ── Cloud SQL (MySQL) ────────────────────────────────────────────
 MYSQL_HOST=127.0.0.1             # 127.0.0.1 when using the Cloud SQL Auth Proxy
@@ -272,7 +425,7 @@ All keys go in `backend/.env`.
 1. **Job Extraction:** The job posting is scraped once via the Bright Data MCP LinkedIn extractor and parsed into structured `JobDetails`, which are injected into every downstream task.
 2. **GitHub Analysis & Resume Parsing (in parallel):** The GitHub Project Summarizer chunks and indexes your public repos into Weaviate with Voyage embeddings, then retrieves and reranks the projects most relevant to the job. Meanwhile the Resume Analyzer extracts your resume into validated structured JSON.
 3. **Profile Compilation:** The Profiler agent creates a comprehensive profile using the parsed resume, GitHub summaries, and job requirements.
-4. **Resume Tailoring:** The Resume Strategist aligns your resume with the job description.
+4. **Resume Tailoring:** The Resume Strategist aligns your resume with the job description, then renders it as a polished Word (.docx) resume via the live document-generation microservice (`generate_resume_docx` tool, max 3 attempts) — the .docx is converted to PDF with LibreOffice for the in-browser preview, and the Markdown version remains the fallback when the service or conversion is unavailable. The microservice is a separate FastAPI app deployed on AWS ECS Fargate; its source is at **[arijitde92/resume_docx_generator](https://github.com/arijitde92/resume_docx_generator)**.
 5. **Interview Prep:** The Interview Preparer researches the company's interview process and role-specific questions with the `web_search` tool, then generates custom interview questions and talking points grounded in your tailored resume — citing sources for anything it found on the web.
 
 ---
@@ -293,6 +446,7 @@ MIT License
 ## 🤝 Acknowledgements
 
 - [Crew AI](https://www.crewai.com/)
+- [resume_docx_generator](https://github.com/arijitde92/resume_docx_generator) — the companion .docx rendering microservice
 - [Weaviate](https://weaviate.io/)
 - [Voyage AI](https://www.voyageai.com/)
 - [LangChain](https://python.langchain.com/)

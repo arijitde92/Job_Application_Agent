@@ -113,7 +113,9 @@ export default function HomePage() {
         )}
       </main>
 
-      {previewJobId && <ResumePreviewModal jobId={previewJobId} onClose={() => setPreviewJobId(null)} />}
+      {previewJobId && <ResumePreviewModal jobId={previewJobId}
+        hasPdf={!!jobs.find((j) => j.id === previewJobId)?.tailored_resume_pdf_gcs_path}
+        onClose={() => setPreviewJobId(null)} />}
       {previewResumeId && <ResumePreviewModal resumeId={previewResumeId} onClose={() => setPreviewResumeId(null)} />}
       {completedJob && <ResumeReadyModal job={completedJob}
         onClose={() => { setCompletedJob(null); fetchData(); }}

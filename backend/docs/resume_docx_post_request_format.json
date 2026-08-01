@@ -1,0 +1,218 @@
+{
+  "metadata": {
+    "request_id": "full-resume-001",
+    "template": "modern",
+    "document_name": "Arijit De Resume",
+    "page_size": "letter",
+    "section_order": [
+      "summary",
+      "experience",
+      "education",
+      "skills",
+      "publications",
+      "projects",
+      "certifications"
+    ]
+  },
+  "resume": {
+    "personal_information": {
+      "name": "Arijit De",
+      "location": "Kolkata, India",
+      "email": "arijitde2050@gmail.com",
+      "phone": "+918981800329",
+      "github": "https://github.com/arijitde92",
+      "linkedin": "https://www.linkedin.com/in/de-arijit/"
+    },
+    "summary": "Senior AI Engineer (PhD) with 6+ years building production-grade GenAI and agentic systems. Expert in RAG, LLM orchestration (LangGraph, Google ADK, LangChain), MCP, and prompt engineering over vector databases, deployed on GCP Vertex AI and AWS Bedrock/SageMaker with LLMOps evaluation (Ragas, LangFuse) and guardrails. Builds cloud-native Python/FastAPI microservices and translates business requirements into scalable AI products.",
+    "experience": [
+      {
+        "job_title": "Senior AI Engineer",
+        "company": "Common Lab Ventures",
+        "location": "Singapore",
+        "work_mode": "Remote Full time",
+        "start_date": "SEP 2025",
+        "end_date": "PRESENT",
+        "bullets": [
+          "Architected and delivered production-grade machine learning systems using a multi-agent AI platform (**LangChain**, **LangGraph, Python, FastAPI, MCP**) for Smart Project Management, increasing business efficiency by 70%.",
+          "Led the end-to-end deployment of AI services on **GCP**, establishing rigorous system evaluation benchmarks to monitor performance across 3,000+ daily agent runs, ensuring high availability and 99% uptime.",
+          "Hardened multi-agent workflows for production reliability with tool-validation layer (**Pydantic** schema + business-rule checks), agent guardrails, and human-in-the-loop approval gates for high-stakes actions cutting task failure rate by 60%.",
+          "Instrumented observability via **LangFuse** tracing and **Ragas** evaluation, lifting evaluation scores by 75%."
+        ]
+      },
+      {
+        "job_title": "AI / ML Engineer",
+        "company": "mVizn",
+        "company_url": "https://mvizn.com/",
+        "location": "Singapore",
+        "work_mode": "Remote Full time",
+        "start_date": "JAN 2024",
+        "end_date": "AUG 2025",
+        "bullets": [
+          "Developed complex multi-agent solutions with multimodal **RAG** pipelines over massive text, image, and CAD datasets (10M+ vectors in **Pinecone**) using hybrid search and cross encoder reranking, achieving retrieval accuracy (recall@k) of 92% while holding retrieval latency (TTFT) under 600 ms.",
+          "Reduced document ingestion latency by 60% and enabled horizontal scaling by designing a distributed, event-driven ETL pipeline using **PySpark**, Google Cloud Pub/Sub, and Airflow.",
+          "Implemented scalable backend architectures using RESTful API (**FastAPI**), data validation using **Pydantic**, asynchronous system design using **asyncio**, increasing concurrency by 40%.",
+          "Improved reliable code development and reduced testing time by 40% by planning vigorous testing using **PyTest**."
+        ]
+      },
+      {
+        "job_title": "Research Engineer",
+        "company": "Institute of Neurosciences",
+        "location": "India",
+        "work_mode": "Onsite",
+        "start_date": "JAN 2022",
+        "end_date": "DEC 2023",
+        "bullets": [
+          "Planned and implemented custom 3D Computer Vision solutions for neurological disorder analysis (**PyTorch**, Python, **OpenCV**), improving diagnosis speed by 40% and achieving 88.68% accuracy on clinical scans.",
+          "Optimized deep learning models with **ONNX**, tracked experiments with **Weights & Biases**, and deployed via **Docker** on **AWS (SageMaker, EC2, EKS/Kubernetes, IAM)**."
+        ]
+      },
+      {
+        "job_title": "Machine Learning Engineer",
+        "company": "Mercedes-Benz Research & Development India",
+        "location": "India",
+        "work_mode": "Onsite",
+        "start_date": "AUG 2018",
+        "end_date": "AUG 2019",
+        "bullets": [
+          "Developed and optimized a computer vision pipeline for Vulnerable Road User (VRU) detection by fine-tuning **YOLO**v3 on large-scale annotated datasets, attaining detection mAP50 of 83% at real-time inference speeds.",
+          "Built automated quality assurance (QA) and evaluation frameworks using Python, **OpenCV**, NumPy, improving annotation throughput by 20% and data quality by 25%."
+        ]
+      },
+      {
+        "job_title": "Assistant Systems Engineer",
+        "company": "Tata Consultancy Services",
+        "location": "India",
+        "work_mode": "Onsite",
+        "start_date": "AUG 2014",
+        "end_date": "APR 2015",
+        "bullets": [
+          "Maintained high-availability backend systems (Java, MySQL) for TCS's internal website, serving 100,000+ users; streamlined the feature release cycle, reducing deployment time by 20%."
+        ]
+      }
+    ],
+    "education": [
+      {
+        "degree": "PhD",
+        "institution": "Jadavpur University",
+        "location": "India",
+        "start_date": "FEB 2020",
+        "end_date": "APR 2025"
+      },
+      {
+        "degree": "M.Tech. Computer Science & Engineering",
+        "institution": "Jadavpur University",
+        "location": "India",
+        "gpa": "8.83",
+        "start_date": "AUG 2016",
+        "end_date": "JUN 2018"
+      },
+      {
+        "degree": "B.Tech. Computer Science & Engineering",
+        "institution": "Techno India",
+        "location": "India",
+        "gpa": "8.81",
+        "start_date": "AUG 2010",
+        "end_date": "MAY 2014"
+      }
+    ],
+    "skills": [
+      {
+        "category": "Languages",
+        "skills": ["Python", "C++", "SQL"]
+      },
+      {
+        "category": "LLM/Agent Systems",
+        "skills": [
+          "Multi-Agent Orchestration (LangGraph, Google ADK, CrewAI)",
+          "LangChain",
+          "Retrieval Augmented Generation (RAG)",
+          "Model Context Protocol (MCP)",
+          "Prompt Engineering",
+          "Agent Evaluation (Ragas, DeepEval)",
+          "LLM Guardrails",
+          "Observability/Tracing (LangFuse)",
+          "LLM APIs (OpenAI, Gemini, Claude)"
+        ]
+      },
+      {
+        "category": "Frameworks / Libraries",
+        "skills": [
+          "FastAPI",
+          "Flask",
+          "Pydantic",
+          "asyncio",
+          "PyTest",
+          "MySQL",
+          "PyTorch",
+          "Scikit-learn",
+          "OpenCV",
+          "Pandas",
+          "NumPy"
+        ]
+      },
+      {
+        "category": "Cloud & Ops",
+        "skills": [
+          "Google Cloud Platform (Cloud Run, Cloud Storage, IAM/RBAC)",
+          "GitHub Actions",
+          "AWS (Bedrock, SageMaker, EC2)",
+          "Git",
+          "Docker",
+          "MLflow",
+          "Weights & Biases"
+        ]
+      }
+    ],
+    "publications": [
+      {
+        "citation": "**A. De**, A. Santra, M. Tiwari and A. S. Chowdhury, \"Predicting Genetic Markers for Brain Tumors Using a Composite Loss,\" in IEEE Transactions on Computational Biology and Bioinformatics (TCBB), 2025 July."
+      },
+      {
+        "citation": "**A. De**, A. S. Chowdhury, (2025). Shape Induced Multi-class Deep Graph Cut for Hippocampus Subfield Segmentation. In Pattern Recognition (ICPR 2024). Lecture Notes in Computer Science, vol 15313. Springer, Cham."
+      },
+      {
+        "citation": "**A. De**, M. Tiwari, & A. S. Chowdhury. 3D Hippocampus Segmentation Using a Hog Based Loss Function with Majority Pooling. In 2023 IEEE International Conference on Image Processing (ICIP), Kuala Lumpur, Malaysia 2023, October, pp. 2260-2264."
+      },
+      {
+        "citation": "**A. De**, A.S. Chowdhury, \"DTI based Alzheimer's Disease Classification with Rank Modulated Fusion of CNNs and Random Forest\", Expert Syst. Appl. 169 (2021), 114338."
+      }
+    ],
+    "projects": [
+      {
+        "name": "Doctor Appointment Scheduler",
+        "url": "https://github.com/arijitde92/Doctor_Appointment_Scheduler",
+        "bullets": [
+          "Built a multi-agent conversational appointment-booking system (Google ADK) with a root coordinator delegating to doctor-matching, review, and scheduling agents.",
+          "Integrated MCP-based tool access for structured data and external actions — Cloud SQL MCP, Google Maps MCP, and Google Calendar MCP (via Composio).",
+          "Implemented grounded retrieval over doctor review data using **GCP Vertex AI RAG Engine** and Gemini 2.5 Flash.",
+          "Deployed end-to-end on Google Cloud Run."
+        ]
+      }
+    ],
+    "certifications": [
+      {
+        "name": "Agentic AI: Build Your First Agentic AI System",
+        "issuer": "LinkedIn",
+        "year": "2026",
+        "url": "https://www.linkedin.com/learning/certificates/example"
+      },
+      {
+        "name": "Foundation: Introduction to LangGraph - Python",
+        "issuer": "LangChain Academy",
+        "year": "2026",
+        "url": "https://academy.langchain.com/certificates/example"
+      },
+      {
+        "name": "Multi AI Agent Systems with crewAI",
+        "issuer": "CrewAI",
+        "year": "2025",
+        "url": "https://learn.crewai.com/certificates/example"
+      },
+      {
+        "name": "MCPS: Microsoft Certified Professional",
+        "issuer": "Microsoft",
+        "year": "2017"
+      }
+    ]
+  }
+}

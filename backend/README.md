@@ -99,6 +99,48 @@ uv run crew \
     --name "Your Name"
 ```
 
+> The CLI intentionally stays **Markdown-only** — the .docx generation below is
+> a web-app feature (it needs the job/user identity for GCS and Cloud SQL).
+
+## DOCX resume generation (+ PDF preview)
+
+In the web app, the Resume Strategist agent does more than write Markdown:
+after tailoring the content it assembles it into a structured resume JSON and
+calls the per-run **`generate_resume_docx`** tool
+([app/services/crew/docx_tools.py](app/services/crew/docx_tools.py)), which
+POSTs to an external document service (`RESUME_DOCX_SERVICE_URL`) and receives
+a polished Word (.docx) resume named
+`{applicant_name}_{company_name}_{job_name}_resume.docx`.
+
+- **Retries / fallback:** the agent gets at most **3 tool attempts**; the tool
+  enforces the cap. If the service stays unavailable, the run completes
+  exactly as before — the Markdown resume is uploaded and served.
+- **PDF preview:** a generated .docx is converted to PDF with **LibreOffice
+  headless** ([app/services/docx_to_pdf.py](app/services/docx_to_pdf.py)). The
+  frontend's *View Resume* renders that PDF; *Download* serves the .docx. The
+  Markdown version is always uploaded too and is the preview fallback whenever
+  no PDF exists.
+- **Storage:** `jobs.tailored_resume_gcs_path` (download target — .docx when
+  generated, else .md), `jobs.tailored_resume_md_gcs_path` (always),
+  `jobs.tailored_resume_pdf_gcs_path` (nullable). The columns are added by the
+  lightweight startup migration in `app/main.py`.
+
+**System dependency — LibreOffice** (for the docx→pdf conversion):
+
+```bash
+sudo apt-get install -y libreoffice-writer fonts-liberation
+```
+
+Missing LibreOffice degrades gracefully: the .docx is still generated and
+downloadable, the in-browser preview just falls back to Markdown.
+
+**Env vars** (in `backend/.env`, see `.env.example`):
+
+```env
+RESUME_DOCX_SERVICE_URL=http://resume-service-alb-1115872566.us-east-2.elb.amazonaws.com/api/v1/resume/generate
+RESUME_DOCX_TIMEOUT_SECONDS=120
+```
+
 ## Tests
 
 ```bash
