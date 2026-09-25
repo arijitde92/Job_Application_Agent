@@ -6,21 +6,81 @@ downloading tailored resumes and interview materials.
 """
 
 import asyncio
+import os
+import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse, Response
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.models import User, Job, GithubProfile, Resume
-from app.schemas import TailorJobRequest, JobResponse, JobDetailResponse
+from app.schemas import (
+    TailorJobRequest, JobResponse, JobDetailResponse, JobDescriptionTextResponse,
+)
 from app.api.deps import get_current_user
+from app.core.config import get_settings
 from app.services.gcs_service import _RESUME_CONTENT_TYPES, download_file, delete_file
 from app.services.crew_runner import run_crew_for_job, progress_store
+from app.services.extractors.text_job_extractor import (
+    ALLOWED_JOB_DESCRIPTION_EXTENSIONS,
+    MAX_JOB_DESCRIPTION_CHARS,
+    JobDescriptionParsingError,
+    extract_job_description_file_text,
+)
 
+settings = get_settings()
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+
+@router.post("/description/extract", response_model=JobDescriptionTextResponse)
+async def extract_job_description(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Extract the text of an uploaded job description file (.pdf, .docx, .md, .txt).
+
+    Nothing is stored: the text is returned so the frontend can show it in the
+    job-description textbox for review before it is submitted to /tailor.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_JOB_DESCRIPTION_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF (.pdf), Word (.docx), Markdown (.md) or text (.txt) "
+                   "job description files are accepted.",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > settings.max_resume_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum allowed size is {settings.MAX_RESUME_SIZE_MB} MB.",
+        )
+
+    # The parsers work on paths; PDF parsing is CPU-bound, so keep it off the loop.
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, prefix="jd_") as f:
+        f.write(file_bytes)
+        tmp_path = f.name
+    try:
+        text = await asyncio.to_thread(extract_job_description_file_text, tmp_path)
+    except JobDescriptionParsingError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Could not read text from '{file.filename}'. {e}",
+        )
+    finally:
+        os.unlink(tmp_path)
+
+    if len(text) > MAX_JOB_DESCRIPTION_CHARS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"The job description is too long (over "
+                   f"{MAX_JOB_DESCRIPTION_CHARS:,} characters).",
+        )
+    return JobDescriptionTextResponse(filename=file.filename, text=text)
 
 
 @router.post("/tailor", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
@@ -31,6 +91,8 @@ async def tailor_resume(
 ):
     """Start a crew execution to tailor a resume for a job posting.
 
+    The job comes from either ``linkedin_job_url`` (scraped) or
+    ``job_description_text`` (pasted or extracted from an uploaded file).
     A GitHub profile is optional — when ``github_profile_id`` is omitted the
     resume is tailored from the job description + uploaded resume alone.
     """
@@ -58,6 +120,7 @@ async def tailor_resume(
         github_profile_id=req.github_profile_id,
         resume_id=req.resume_id,
         linkedin_job_url=req.linkedin_job_url,
+        job_description_input=req.job_description_text,
         status="pending",
     )
     db.add(job)
@@ -69,6 +132,7 @@ async def tailor_resume(
             job_id=job.id, user_id=current_user.id, user_email=current_user.email,
             github_profile=github_profile, resume_gcs_path=resume.gcs_path,
             job_url=req.linkedin_job_url,
+            job_description_text=req.job_description_text,
             resume_id=resume.id,
             user_name=f"{current_user.first_name} {current_user.last_name}",
             resume_filename=resume.original_filename,
@@ -195,6 +259,7 @@ async def retry_job(
             job_id=job.id, user_id=current_user.id, user_email=current_user.email,
             github_profile=github_profile, resume_gcs_path=resume.gcs_path,
             job_url=job.linkedin_job_url,
+            job_description_text=job.job_description_input,
             resume_id=resume.id,
             user_name=f"{current_user.first_name} {current_user.last_name}",
             resume_filename=resume.original_filename,

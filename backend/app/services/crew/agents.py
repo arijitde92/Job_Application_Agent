@@ -63,7 +63,12 @@ claude_llm_extraction = LLM(
 search_tool = SerperDevTool()
 scrape_tool = ScrapeWebsiteTool()
 read_resume = FileReadTool()
-semantic_search_resume = MDXSearchTool()
+# Local ONNX embedder — this project has no OPENAI_API_KEY (LLMs are Gemini /
+# Z.ai / Anthropic), and MDXSearchTool's RAG index defaults to OpenAI
+# embeddings otherwise.
+semantic_search_resume = MDXSearchTool(
+    config={"embedding_model": {"provider": "onnx", "config": {}}}
+)
 
 @tool("linkedin_job_extractor")
 def extract_linkedin_job_details_tool(url: str) -> str:

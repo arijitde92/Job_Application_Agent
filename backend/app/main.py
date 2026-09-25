@@ -60,6 +60,27 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001 — never let migration break startup
             logger.warning("Startup tailored-artifact-columns migration skipped: %s", exc)
 
+        # Same policy: a job may now come from a pasted/uploaded job
+        # description instead of a LinkedIn URL. Add jobs.job_description_input
+        # and relax jobs.linkedin_job_url to NULL. Idempotent and best-effort.
+        try:
+            def _add_job_description_input_column(sync_conn):
+                from sqlalchemy import inspect, text
+                columns = {c["name"]: c for c in inspect(sync_conn).get_columns("jobs")}
+                if "job_description_input" not in columns:
+                    sync_conn.execute(text(
+                        "ALTER TABLE jobs ADD COLUMN job_description_input TEXT NULL"
+                    ))
+                    logger.info("Added jobs.job_description_input column")
+                if not columns["linkedin_job_url"]["nullable"]:
+                    sync_conn.execute(text(
+                        "ALTER TABLE jobs MODIFY COLUMN linkedin_job_url VARCHAR(500) NULL"
+                    ))
+                    logger.info("Made jobs.linkedin_job_url nullable")
+            await conn.run_sync(_add_job_description_input_column)
+        except Exception as exc:  # noqa: BLE001 — never let migration break startup
+            logger.warning("Startup job-description-input migration skipped: %s", exc)
+
         # Best-effort: fail jobs left pending/processing for >3h (orphaned by a
         # prior restart). Reuses THIS connection — no new session/checkout — and
         # swallows all errors so it can never abort startup or kill the proxy.

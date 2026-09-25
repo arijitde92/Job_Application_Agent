@@ -46,7 +46,7 @@ def _run_crew_sync(
     job_id: int, user_id: int, user_email: str,
     github_username: str = None, github_url: str = None,
     resume_bytes: bytes = None, resume_filename: str = None, job_url: str = None,
-    resume_id: int = None, user_name: str = None,
+    resume_id: int = None, user_name: str = None, job_description_text: str = None,
 ):
     """
     Synchronous crew execution — runs in a thread.
@@ -55,6 +55,9 @@ def _run_crew_sync(
     The raw resume file bytes (.pdf/.docx/.md) are parsed to text BEFORE the
     crew is built; a ResumeParsingError aborts the run so the crew never
     starts and the job is marked failed (the UI offers a retry).
+
+    Job details come from scraping ``job_url`` (LinkedIn) or, when the user
+    pasted/uploaded the description instead, from ``job_description_text``.
 
     When no GitHub URL is supplied the crew is built without the GitHub
     summarizer agent/task and tailors the resume from the resume + job
@@ -68,8 +71,12 @@ def _run_crew_sync(
     # Step 1: Extract job details
     _update_progress(job_id, "extracting_job_info")
     try:
-        from app.services.extractors.linkedin_extractor import extract_linkedin_job_details
-        job_details = extract_linkedin_job_details(job_url)
+        if job_description_text:
+            from app.services.extractors.text_job_extractor import extract_job_details_from_text
+            job_details = extract_job_details_from_text(job_description_text)
+        else:
+            from app.services.extractors.linkedin_extractor import extract_linkedin_job_details
+            job_details = extract_linkedin_job_details(job_url)
         job_info = job_details.to_dict()
         job_info.pop("about_company", None)
         job_details_json = json.dumps(job_info, indent=2)
@@ -191,7 +198,7 @@ def _run_crew_sync(
 
         job_application_inputs = {
             "applicant_name": applicant_name,
-            "job_posting_url": job_url,
+            "job_posting_url": job_url or "N/A (job description provided directly)",
             "job_name": job_details.job_name,
             "company_name": job_details.company_name,
             "resume_path": resume_path,
@@ -273,12 +280,16 @@ def _run_crew_sync(
 
 async def run_crew_for_job(
     job_id: int, user_id: int, user_email: str,
-    github_profile, resume_gcs_path: str, job_url: str,
+    github_profile, resume_gcs_path: str, job_url: str = None,
     resume_id: int = None, user_name: str = None, resume_filename: str = None,
+    job_description_text: str = None,
 ):
     """
     Async entry point for crew execution. Updates job status in DB.
     Runs the synchronous crew pipeline in a thread pool executor.
+
+    Exactly one of ``job_url`` (LinkedIn) / ``job_description_text`` (pasted or
+    uploaded by the user) identifies the job.
 
     ``github_profile`` may be ``None`` when the user tailors a resume without a
     GitHub profile; the crew then runs without the GitHub summarizer.
@@ -316,7 +327,7 @@ async def run_crew_for_job(
             job_id, user_id, user_email,
             gh_username, gh_url,
             resume_bytes, resume_filename, job_url,
-            resume_id, user_name,
+            resume_id, user_name, job_description_text,
         )
 
         # Save extracted job details to DB on the correct async event loop
