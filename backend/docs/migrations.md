@@ -39,3 +39,24 @@ ALTER TABLE jobs
 
 **Fresh databases:** no action needed — `create_all` builds the `jobs` table
 with the nullable column and `SET NULL` FK directly from the updated model.
+
+---
+
+## 2026-09-25 — Job description text as an alternative to a LinkedIn URL
+
+**Why:** A job can now be created from a pasted or uploaded job description
+instead of a LinkedIn URL (issue #10). `jobs.linkedin_job_url` becomes
+nullable, and the new `jobs.job_description_input` column stores the text the
+user supplied so a failed job can be retried. Exactly one of the two is set.
+
+**Applied automatically on startup** by `app/main.py` (idempotent, like the
+`parsed_resume_path` and tailored-artifact column migrations). If that step
+logs "migration skipped", apply it by hand:
+
+```sql
+ALTER TABLE jobs MODIFY COLUMN linkedin_job_url VARCHAR(500) NULL;
+ALTER TABLE jobs ADD COLUMN job_description_input TEXT NULL AFTER linkedin_job_url;
+```
+
+**Fresh databases:** no action needed — `create_all` builds both columns from
+the updated model.

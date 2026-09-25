@@ -161,13 +161,10 @@ async def delete_resume(
         raise HTTPException(status_code=404, detail="Resume not found.")
 
     try:
-        # Delete from GCS
-        try:
-            delete_file(resume.gcs_path)
-        except Exception:
-            pass  # GCS file might not exist; still remove DB record
-
-        # Delete DB record
+        # Delete the DB record first — the FK RESTRICT check happens on this
+        # commit. Only delete the GCS object once we know the row is
+        # actually gone, otherwise a restrict-triggered rollback would leave
+        # the DB record intact but its file permanently deleted.
         await db.delete(resume)
         await db.commit()
     except Exception:
@@ -176,3 +173,8 @@ async def delete_resume(
             status_code=status.HTTP_409_CONFLICT,
             detail="Cannot delete this resume — it has been used in a job application.",
         )
+
+    try:
+        delete_file(resume.gcs_path)
+    except Exception:
+        pass  # GCS file might already be gone; DB record is already removed

@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # ── Resume DOCX service ───────────────────────────────────────────────
     RESUME_DOCX_SERVICE_URL: str = Field(
         default=(
-            "http://resume-service-alb-1115872566.us-east-2.elb.amazonaws.com"
+            "http://localhost:8001"
             "/api/v1/resume/generate"
         ),
         description="POST endpoint of the external resume .docx generation service",

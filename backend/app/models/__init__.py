@@ -85,7 +85,10 @@ class Job(Base):
     # ON DELETE SET NULL so deleting a profile leaves historical jobs intact.
     github_profile_id = Column(Integer, ForeignKey("github_profiles.id", ondelete="SET NULL"), nullable=True)
     resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="RESTRICT"), nullable=False)
-    linkedin_job_url = Column(String(500), nullable=False)
+    # Job source — exactly one is set: the LinkedIn posting URL, or the job
+    # description text the user pasted/uploaded (kept so a retry can re-run).
+    linkedin_job_url = Column(String(500), nullable=True)
+    job_description_input = Column(Text, nullable=True)
 
     # Extracted job details
     job_name = Column(String(255), nullable=True)

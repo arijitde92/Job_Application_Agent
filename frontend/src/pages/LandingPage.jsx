@@ -11,7 +11,7 @@ const PROBLEMS = [
 
 const STEPS = [
   { num: '01', icon: <FiUpload size={32} />, title: 'Upload & Link', desc: 'Upload your resume and link your GitHub profile' },
-  { num: '02', icon: <FiLink size={32} />, title: 'Paste Job URL', desc: 'Paste a LinkedIn job posting URL' },
+  { num: '02', icon: <FiLink size={32} />, title: 'Add the Job', desc: 'Paste a LinkedIn job URL, or paste / upload the job description' },
   { num: '03', icon: <FiCpu size={32} />, title: 'AI Tailoring', desc: 'AI agents analyze, match, and tailor your resume' },
 ];
 

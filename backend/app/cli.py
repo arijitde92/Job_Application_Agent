@@ -109,6 +109,14 @@ def api() -> None:
     # uvicorn excludes whole directory trees only when given absolute paths
     # (it matches them against each changed file's absolute parents). Relative
     # globs like ".venv/*" do NOT work. "*.log" still matches by filename.
+    #
+    # `logs/` is normally created lazily by app.core.logging on first import,
+    # which happens *after* uvicorn resolves these excludes. If it doesn't
+    # exist yet, uvicorn falls back to globbing the absolute path, which
+    # Python 3.13's pathlib rejects ("Non-relative patterns are unsupported").
+    # Ensure it exists upfront so the exclude always resolves cleanly.
+    (BACKEND_DIR / "logs").mkdir(exist_ok=True)
+
     uvicorn.run(
         "app.main:app",
         host=DEFAULT_API_HOST,
