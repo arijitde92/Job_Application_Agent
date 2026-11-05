@@ -14,11 +14,10 @@ Two steps, mirroring what the LinkedIn extractor produces:
      The user's text is kept verbatim as ``job_description``; an LLM only
      fills in the metadata fields (title, company, location, ...). If the LLM
      call fails the run still proceeds with the metadata left as "N/A" — the
-     crew tailors from ``job_description`` either way.
+     pipeline tailors from ``job_description`` either way.
 """
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -33,9 +32,8 @@ from app.services.resume_parser import (
     extract_pdf_text,
 )
 
-# JobDetails lives in the LinkedIn extractor, which imports crewai_tools at
-# module level; it is imported lazily because app.schemas imports this module
-# for the length limits.
+# JobDetails lives in the LinkedIn extractor; it is imported lazily to keep
+# this module light, because app.schemas imports it for the length limits.
 if TYPE_CHECKING:
     from app.services.extractors.linkedin_extractor import JobDetails
 
@@ -160,16 +158,11 @@ _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 
 def _call_metadata_llm(prompt: str) -> str:
-    """Send ``prompt`` to the metadata-extraction LLM and return its reply."""
-    from crewai import LLM
+    """Send ``prompt`` to the metadata-extraction LLM (Gemini) and return its reply."""
+    from app.services.pipeline.llms import build_gemini_llm
 
-    llm = LLM(
-        model="gemini/gemini-3.5-flash-lite",
-        api_key=os.environ.get("GEMINI_API_KEY"),
-        temperature=0.0,
-        max_tokens=4000,
-    )
-    return str(llm.call([{"role": "user", "content": prompt}]))
+    llm = build_gemini_llm(temperature=0.0, max_output_tokens=4000)
+    return llm.with_config(run_name="job_metadata_extraction").invoke(prompt).text
 
 
 def _parse_metadata(reply: str) -> _JobMetadata:

@@ -1,16 +1,18 @@
 """
-app.services.crew.docx_tools
-----------------------------
-Per-run tool factory for the resume_strategist agent's .docx generation step.
+app.services.pipeline.tools.docx_tools
+--------------------------------------
+Per-run LangChain tool factory for the resume_strategist agent's .docx
+generation step.
 
 The generate_resume_docx tool POSTs the tailored resume content to an external
 document-rendering service (``RESUME_DOCX_SERVICE_URL``) which returns a
 polished Word (.docx) resume. Like the save tool in
-``app.services.crew.resume_tools``, it is built fresh for every crew run so
+``app.services.pipeline.tools.resume_tools``, it is built fresh for every
+pipeline run so
 the job identity and the output path are closured into the tool rather than
 supplied by the LLM, and so a shared ``ResumeDocxContext.state`` dict can
-carry the outcome to the crew runner (which converts the docx to PDF and
-uploads both).
+carry the outcome to the pipeline runner (which converts the docx to PDF
+and uploads both).
 
 Responsibility split (user decision): the agent supplies ONLY the ``resume``
 object — personal information, summary, experience, and so on. The tool wraps
@@ -22,9 +24,9 @@ The agent may retry a failed call, but never more than ``_MAX_ATTEMPTS``
 times in total — the tool enforces the cap itself via ``ctx.state`` and its
 terminal error tells the agent to stop and fall back to the Markdown resume.
 
-CrewAI converts tool exceptions into error messages fed back to the LLM, so
-this tool never relies on raising: every failure returns an "ERROR: ..."
-string the agent can react to.
+The tool never relies on raising: every failure returns an "ERROR: ..."
+string the agent can react to (``ToolErrorMiddleware`` is only the safety
+net for the unexpected).
 """
 
 import json
@@ -33,11 +35,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict
 
 import requests
-from crewai.tools import tool
+from langchain_core.tools import BaseTool, tool
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.services.crew.resume_tools import _strip_code_fences
+from app.services.pipeline.tools.resume_tools import _strip_code_fences
 
 logger = get_logger(__name__)
 
@@ -71,7 +73,7 @@ class ResumeDocxContext:
     company_name: str
     job_name: str
     job_id: int
-    # Local path the generated .docx is written to; chosen by the crew runner
+    # Local path the generated .docx is written to; chosen by the pipeline runner
     # (a temp file for the web app) so the LLM never picks filesystem paths.
     output_path: str
     # Human display name ("First Last") used for metadata.document_name; the
@@ -139,8 +141,16 @@ def _build_payload(resume: dict, ctx: ResumeDocxContext, attempt: int) -> dict:
     }
 
 
-def make_generate_resume_docx_tool(ctx: ResumeDocxContext):
-    """Build the generate_resume_docx tool bound to one run's ``ctx``."""
+def make_generate_resume_docx_tool(ctx: ResumeDocxContext) -> BaseTool:
+    """
+    Build the generate_resume_docx tool bound to one run's ``ctx``.
+
+    Args:
+        ctx: The run's job identity, output path and shared state.
+
+    Returns:
+        The ``generate_resume_docx`` LangChain tool.
+    """
     settings = get_settings()
 
     @tool("generate_resume_docx")
@@ -256,7 +266,7 @@ def make_generate_resume_docx_tool(ctx: ResumeDocxContext):
                 f"generate_resume_docx again. You have {remaining} attempt(s) left."
             )
 
-        # 3. Save the .docx locally; the crew runner picks it up from ctx.state.
+        # 3. Save the .docx locally; the pipeline runner picks it up from ctx.state.
         try:
             with open(ctx.output_path, "wb") as f:
                 f.write(response.content)

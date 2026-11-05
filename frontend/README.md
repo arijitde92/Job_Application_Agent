@@ -2,7 +2,8 @@
 
 React + Vite (JavaScript) single-page app. Authenticates against the FastAPI
 backend, lets users link a GitHub profile and upload a resume, kicks off the
-CrewAI tailoring pipeline, and streams live progress via Server-Sent Events.
+LangGraph tailoring pipeline (LangChain agents), and streams live progress via
+Server-Sent Events.
 
 ## Layout
 

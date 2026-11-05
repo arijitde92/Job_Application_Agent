@@ -20,24 +20,68 @@ export default function ProgressTracker({ jobId, includeGithub = true, onComplet
   useEffect(() => {
     if (!jobId) return;
 
-    const eventSource = new EventSource(`/api/jobs/${jobId}/progress`);
-    eventSource.onmessage = (event) => {
+    // EventSource cannot send an Authorization header, and the endpoint needs
+    // the JWT, so read the SSE stream with fetch instead.
+    const controller = new AbortController();
+    let finished = false;
+
+    const handleEvent = (raw) => {
+      const line = raw.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) return;
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(line.slice(5).trim());
         setCurrentStep(data.step);
         if (data.error) setError(data.error);
         if (data.step === 'completed' || data.step === 'failed') {
-          eventSource.close();
+          finished = true;
+          controller.abort();
           if (data.step === 'completed') onComplete?.();
         }
       } catch (e) {
         console.error('SSE parse error:', e);
       }
     };
-    eventSource.onerror = () => {
-      // Auto-reconnect is built into EventSource
+
+    const connect = async () => {
+      while (!finished && !controller.signal.aborted) {
+        try {
+          let token = null;
+          try { token = localStorage.getItem('token'); } catch { /* ignore */ }
+          const res = await fetch(`/api/jobs/${jobId}/progress`, {
+            headers: {
+              Accept: 'text/event-stream',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            signal: controller.signal,
+          });
+          if (!res.ok || !res.body) throw new Error(`progress stream HTTP ${res.status}`);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let idx;
+            while ((idx = buffer.indexOf('\n\n')) !== -1) {
+              handleEvent(buffer.slice(0, idx));
+              buffer = buffer.slice(idx + 2);
+            }
+          }
+        } catch (e) {
+          if (controller.signal.aborted) return;
+          console.error('SSE error:', e);
+        }
+        // Stream ended or failed before completion — retry shortly.
+        if (!finished && !controller.signal.aborted) {
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
     };
-    return () => eventSource.close();
+
+    connect();
+    return () => controller.abort();
   }, [jobId, onComplete]);
 
   const getStepIndex = () => steps.findIndex((s) => s.key === currentStep);

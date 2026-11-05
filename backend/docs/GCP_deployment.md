@@ -44,13 +44,13 @@ instance, GCS bucket, service account, OAuth client. If not, complete
 
 Two implementation details dictate how the backend must be deployed:
 
-1. **Tailoring jobs run in-process.** `POST /api/jobs/tailor` starts the CrewAI
+1. **Tailoring jobs run in-process.** `POST /api/jobs/tailor` starts the LangGraph
    pipeline with `asyncio.create_task(...)` inside the API process — there is no
    queue or worker service. If the instance handling the job is throttled or
    shut down, the job dies (startup cleanup later marks jobs stuck >3h as
    failed).
 2. **Progress is stored in process memory.** The SSE endpoint
-   `GET /api/jobs/{id}/progress` reads `crew_runner.progress_store`, a plain
+   `GET /api/jobs/{id}/progress` reads `pipeline_runner.progress_store`, a plain
    dict. The SSE request must land on the *same process* that runs the job.
 
 Therefore the backend service **must** run with:
@@ -58,13 +58,13 @@ Therefore the backend service **must** run with:
 | Setting | Value | Why |
 |---|---|---|
 | `--min-instances` / `--max-instances` | `1` / `1` | one instance → SSE always finds the job's `progress_store`; jobs aren't lost to scale-in |
-| `--no-cpu-throttling` | on | crew keeps CPU after the HTTP request returns |
+| `--no-cpu-throttling` | on | the pipeline keeps CPU after the HTTP request returns |
 | `--timeout` | `3600` | long SSE streams and downloads |
 | uvicorn workers | `1` | multiple workers = multiple processes = separate `progress_store`s |
 
 > One instance with ~80 concurrent requests is plenty for a personal/demo
 > deployment. To scale horizontally later, move `progress_store` to the DB or
-> Redis and run the crew in a Cloud Run **Job** or a task queue — see
+> Redis and run the pipeline in a Cloud Run **Job** or a task queue — see
 > [Hardening ideas](#hardening-ideas) at the end.
 
 ---
@@ -256,8 +256,10 @@ spec:
             - {name: GOOGLE_OAUTH_CLIENT_ID,  value: "your-client-id.apps.googleusercontent.com"}
             - {name: LOG_LEVEL,               value: "INFO"}
             - {name: MAX_RESUME_SIZE_MB,      value: "10"}
-            - {name: CREWAI_TOOLS_ALLOW_UNSAFE_PATHS, value: "true"}
-            - {name: CREWAI_TRACING_ENABLED,  value: "false"}
+            # LangSmith tracing — traces contain resume data. To enable, set
+            # "true", add LANGSMITH_API_KEY as a secret below and keep the project.
+            - {name: LANGSMITH_TRACING,       value: "false"}
+            - {name: LANGSMITH_PROJECT,       value: "job-application-agent"}
             # set after the frontend exists (step 8); harmless meanwhile
             - {name: CORS_ORIGINS,            value: "https://job-agent-web-PLACEHOLDER.a.run.app"}
             # NOTE: GOOGLE_APPLICATION_CREDENTIALS is deliberately ABSENT —
@@ -326,10 +328,10 @@ curl "$API_URL/api/health"
   instance, deploy the service with `--network`/`--subnet`, and set
   `MYSQL_HOST` to the instance's private IP. Cleaner long-term, but requires
   VPC + Service Networking setup.
-- **Public IP with authorized networks** (as used for local dev in
-  GCP_Setup.md §5c) does **not** work from Cloud Run — instances have no
-  stable egress IP unless you add a VPC connector + Cloud NAT. Don't
-  authorize `0.0.0.0/0`.
+- **Public IP with authorized networks** is not used for local development
+  (see the Cloud SQL Auth Proxy steps in GCP_Setup.md §5c), and does **not**
+  work from Cloud Run — instances have no stable egress IP unless you add a
+  VPC connector + Cloud NAT. Don't authorize `0.0.0.0/0`.
 
 ## 7. Build the frontend image
 
@@ -488,7 +490,7 @@ gcloud run deploy job-agent-web --image=$WEB_IMAGE --region=$REGION
 ```
 
 > **Deploys interrupt running jobs.** A new revision replaces the single
-> backend instance, killing any in-flight crew pipeline; the startup cleanup
+> backend instance, killing any in-flight pipeline run; the startup cleanup
 > will mark such jobs failed after 3 h so users can retry. Deploy when no
 > jobs are running.
 
@@ -511,7 +513,7 @@ but is ephemeral — rely on Cloud Logging. Consider an uptime check on
 
 | Item | Config | ~Cost/month |
 |---|---|---|
-| Cloud Run backend | 1 always-on instance, 2 vCPU / 2 GiB, CPU always allocated | ~$100 (halve it with 1 vCPU / 1 GiB if the crew fits) |
+| Cloud Run backend | 1 always-on instance, 2 vCPU / 2 GiB, CPU always allocated | ~$100 (halve it with 1 vCPU / 1 GiB if the pipeline fits) |
 | Cloud Run frontend | scale-to-zero nginx | ~$0–1 |
 | Cloud SQL | `db-f1-micro`, 10 GB SSD | ~$7–10 |
 | GCS, Artifact Registry, Secret Manager, egress | light usage | ~$1–5 |
@@ -532,7 +534,7 @@ constraints bite (it wants a single long-lived process anyway).
 
 ## Hardening ideas
 
-- Move `crew_runner.progress_store` into the `jobs` table (or Redis /
+- Move `pipeline_runner.progress_store` into the `jobs` table (or Redis /
   Memorystore) and run the pipeline via Cloud Run **Jobs** or Cloud Tasks —
   this removes the single-instance/single-worker constraint and makes deploys
   safe at any time.

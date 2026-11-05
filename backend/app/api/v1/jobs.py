@@ -1,14 +1,17 @@
 """
 job_router.py
 -------------
-Endpoints for starting crew execution, listing jobs, checking status/progress,
+Endpoints for starting pipeline runs, listing jobs, checking status/progress,
 downloading tailored resumes and interview materials.
 """
 
 import asyncio
+import json
 import os
+import re
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from fastapi.responses import StreamingResponse, Response
@@ -23,7 +26,7 @@ from app.schemas import (
 from app.api.deps import get_current_user
 from app.core.config import get_settings
 from app.services.gcs_service import _RESUME_CONTENT_TYPES, download_file, delete_file
-from app.services.crew_runner import run_crew_for_job, progress_store
+from app.services.pipeline_runner import progress_store, run_pipeline_for_job
 from app.services.extractors.text_job_extractor import (
     ALLOWED_JOB_DESCRIPTION_EXTENSIONS,
     MAX_JOB_DESCRIPTION_CHARS,
@@ -89,7 +92,7 @@ async def tailor_resume(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Start a crew execution to tailor a resume for a job posting.
+    """Start a pipeline run to tailor a resume for a job posting.
 
     The job comes from either ``linkedin_job_url`` (scraped) or
     ``job_description_text`` (pasted or extracted from an uploaded file).
@@ -128,7 +131,7 @@ async def tailor_resume(
     await db.refresh(job)
 
     asyncio.create_task(
-        run_crew_for_job(
+        run_pipeline_for_job(
             job_id=job.id, user_id=current_user.id, user_email=current_user.email,
             github_profile=github_profile, resume_gcs_path=resume.gcs_path,
             job_url=req.linkedin_job_url,
@@ -210,7 +213,7 @@ async def retry_job(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Re-run a failed or stuck job: reset to pending, clear error, relaunch crew."""
+    """Re-run a failed or stuck job: reset to pending, clear error, relaunch the pipeline."""
     result = await db.execute(
         select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
     )
@@ -255,7 +258,7 @@ async def retry_job(
     progress_store[job_id] = {"current_step": "pending", "error": None}
 
     asyncio.create_task(
-        run_crew_for_job(
+        run_pipeline_for_job(
             job_id=job.id, user_id=current_user.id, user_email=current_user.email,
             github_profile=github_profile, resume_gcs_path=resume.gcs_path,
             job_url=job.linkedin_job_url,
@@ -273,7 +276,7 @@ async def stream_job_progress(
     job_id: int, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """SSE endpoint for real-time crew execution progress."""
+    """SSE endpoint for real-time pipeline progress."""
     result = await db.execute(
         select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
     )
@@ -288,8 +291,8 @@ async def stream_job_progress(
             error = progress.get("error")
             if current_step != last_step:
                 last_step = current_step
-                err_str = f'"{error}"' if error else "null"
-                yield f'data: {{"step": "{current_step}", "error": {err_str}}}\n\n'
+                payload = json.dumps({"step": current_step, "error": error or None})
+                yield f"data: {payload}\n\n"
             if current_step in ("completed", "failed"):
                 break
             await asyncio.sleep(1)
@@ -297,6 +300,22 @@ async def stream_job_progress(
     return StreamingResponse(
         event_stream(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    """
+    Build a Content-Disposition header value that survives non-ASCII names.
+
+    HTTP header values must be latin-1, so a company/job title containing e.g.
+    an en dash ("Acme – Pune") would crash the response. Send an ASCII
+    fallback ``filename`` plus the RFC 5987 UTF-8 ``filename*``.
+    """
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii")
+    ascii_name = re.sub(r'[\\"\r\n;]', "_", ascii_name).strip() or "download"
+    return (
+        f'{disposition}; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
     )
 
 
@@ -323,7 +342,7 @@ async def download_tailored_resume(
         f"_resume{suffix}"
     ).replace(" ", "_")
     return Response(content=content, media_type=media_type,
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+                    headers={"Content-Disposition": _content_disposition("attachment", fname)})
 
 
 @router.get("/{job_id}/resume/pdf")
@@ -343,7 +362,7 @@ async def get_tailored_resume_pdf(
     content = download_file(job.tailored_resume_pdf_gcs_path)
     fname = Path(job.tailored_resume_pdf_gcs_path).name
     return Response(content=content, media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
+                    headers={"Content-Disposition": _content_disposition("inline", fname)})
 
 
 @router.get("/{job_id}/resume/content")
@@ -393,7 +412,7 @@ async def download_interview_materials(
     content = download_file(job.interview_materials_gcs_path)
     fname = f"{(job.company_name or 'interview')}_{(job.job_name or 'prep')}_interview.md".replace(" ", "_")
     return Response(content=content, media_type="text/markdown",
-                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+                    headers={"Content-Disposition": _content_disposition("attachment", fname)})
 
 
 @router.get("/{job_id}/interview/content")

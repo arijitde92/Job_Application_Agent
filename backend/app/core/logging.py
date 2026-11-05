@@ -97,6 +97,12 @@ def _setup_root_logger() -> None:
 
 _setup_root_logger()
 
+# HTTP client libraries log every request URL at INFO. Some URLs carry
+# secrets (e.g. the Bright Data MCP endpoint has ``?token=...``), so keep
+# them at WARNING and above.
+for _noisy in ("httpx", "httpx2", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 
 def get_logger(name: str) -> logging.Logger:
     """
@@ -112,34 +118,42 @@ def get_logger(name: str) -> logging.Logger:
 
 
 # ── Token usage helper ────────────────────────────────────────────────────────
-def log_token_usage(usage, logger: logging.Logger | None = None) -> None:
+def log_token_usage(usage_metadata, logger: logging.Logger | None = None) -> None:
     """
-    Log LLM token usage statistics from a CrewAI kickoff result.
+    Log LLM token usage collected during a pipeline run.
 
     Args:
-        usage: The ``UsageMetrics`` object returned by ``crew.kickoff()``,
-               accessible as ``result.token_usage``.
+        usage_metadata: ``UsageMetadataCallbackHandler.usage_metadata`` — a
+            mapping of model name to LangChain ``UsageMetadata``
+            (``input_tokens``, ``output_tokens``, ``total_tokens`` and
+            optional ``input_token_details`` with ``cache_read``).
         logger: Logger to use. Defaults to the module-level logger.
     """
     _log = logger or get_logger(__name__)
 
-    if usage is None:
-        _log.warning("Token usage metrics not available (None returned).")
+    if not usage_metadata:
+        _log.warning("Token usage metrics not available (no model calls recorded).")
         return
 
-    # CrewAI UsageMetrics fields (all are integers)
-    prompt_tokens      = getattr(usage, "prompt_tokens",      0)
-    completion_tokens  = getattr(usage, "completion_tokens",  0)
-    total_tokens       = getattr(usage, "total_tokens",        0)
-    successful_requests = getattr(usage, "successful_requests", 0)
-    cached_prompt_tokens = getattr(usage, "cached_prompt_tokens", 0)
-
+    totals = {"input": 0, "output": 0, "cache_read": 0, "total": 0}
     _log.info("=" * 55)
     _log.info("LLM TOKEN USAGE SUMMARY")
     _log.info("=" * 55)
-    _log.info("  Prompt tokens      : %d", prompt_tokens)
-    _log.info("  Completion tokens  : %d", completion_tokens)
-    _log.info("  Cached prompt tkns : %d", cached_prompt_tokens)
-    _log.info("  Total tokens       : %d", total_tokens)
-    _log.info("  Successful requests: %d", successful_requests)
+    for model, usage in sorted(usage_metadata.items()):
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        cache_read = (usage.get("input_token_details") or {}).get("cache_read", 0)
+        total = usage.get("total_tokens", input_tokens + output_tokens)
+        totals["input"] += input_tokens
+        totals["output"] += output_tokens
+        totals["cache_read"] += cache_read
+        totals["total"] += total
+        _log.info("  %s", model)
+        _log.info("    Input tokens       : %d", input_tokens)
+        _log.info("    Output tokens      : %d", output_tokens)
+        _log.info("    Cached input tkns  : %d", cache_read)
+        _log.info("    Total tokens       : %d", total)
+    _log.info("-" * 55)
+    _log.info("  All models — input %d, output %d, cached %d, total %d",
+              totals["input"], totals["output"], totals["cache_read"], totals["total"])
     _log.info("=" * 55)

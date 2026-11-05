@@ -1,13 +1,15 @@
 """
-app.services.crew.resume_tools
-------------------------------
-Per-run tool and guardrail factories for the resume_analyzer agent.
+app.services.pipeline.tools.resume_tools
+----------------------------------------
+LangChain tools for the resume_analyzer agent (and ``read_resume``, which
+every resume-reading agent uses).
 
-The save tool is built fresh for every crew run (like the Task objects in
-``app.services.crew.tasks``) so that user_id / resume_id / user_name are
-closured into the tool rather than supplied by the LLM, and so a shared
-``ResumeAnalysisContext.state`` dict can carry the outcome to the task
-guardrail. The tool enforces the required ordering in code:
+``make_save_parsed_resume_tool`` builds the save tool fresh for every pipeline
+run so that user_id / resume_id / user_name are closured into the tool rather
+than supplied by the LLM, and so a shared ``ResumeAnalysisContext.state`` dict
+can carry the outcome to the guardrail middleware
+(``app.services.pipeline.middleware.ParsedResumeGuardrailMiddleware``). The
+tool enforces the required ordering in code:
 
     validate JSON → write temp file → upload to GCS → update database
 
@@ -15,17 +17,20 @@ The database is only touched after the file write and the GCS upload have
 both succeeded. With ``local_only=True`` (isolation test script, CLI) the
 tool stops after the temp-file write — no GCS, no database.
 
-CrewAI converts tool exceptions into error messages fed back to the LLM, so
-this tool never relies on raising: every failure returns an "ERROR: ..."
-string the agent can react to, and the task guardrail aborts the crew if no
-successful save happened after the retry budget.
+The save tool never relies on raising: every failure returns an "ERROR: ..."
+string the agent can react to, and the guardrail aborts the pipeline if no
+successful save happened within the retry budget.
 
-``calculate_yoe`` is the other half of this module: a stateless, module-level
-tool (no per-run identity to closure, so no factory) that turns the positions'
-(start_date, end_date) pairs into the ``years_of_experience`` value. It is the
-one place that arithmetic happens — the agent is told never to estimate the
-number itself. Unlike the save tool it *raises* on bad input: CrewAI turns the
-exception into an error message and lets the agent retry with corrected dates.
+``calculate_yoe`` is a stateless, module-level tool (no per-run identity to
+closure, so no factory) that turns the positions' (start_date, end_date)
+pairs into the ``years_of_experience`` value. It is the one place that
+arithmetic happens — the agent is told never to estimate the number itself.
+Unlike the save tool it *raises* on bad input: ``ToolErrorMiddleware`` turns
+the exception into an error observation and the agent retries with corrected
+dates.
+
+``make_read_resume_tool`` builds a no-argument tool bound to the run's
+extracted resume file, so the agent can read the resume but no other file.
 """
 
 import json
@@ -35,10 +40,9 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from itertools import pairwise
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
-from crewai import TaskOutput
-from crewai.tools import tool
+from langchain_core.tools import BaseTool, tool
 from pydantic import ValidationError
 
 from app.core.logging import get_logger
@@ -54,14 +58,24 @@ logger = get_logger(__name__)
 
 @dataclass
 class ResumeAnalysisContext:
-    """Per-run identity and shared state for the resume-analysis task."""
+    """
+    Per-run identity and shared state for the resume-analysis agent.
+
+    Attributes:
+        user_id: Owner of the resume.
+        resume_id: Database id of the resume (also the parsed JSON's "id").
+        user_name: Display name, used in the parsed-resume filename.
+        local_only: Skip the GCS upload and database update (CLI / tests).
+        resume_text: Extracted resume text — the faithfulness judge's
+            reference. Empty disables the judge.
+        state: Outcome shared by the save tool and the guardrail middleware
+            ("saved", "json", "local_path", "gcs_path").
+    """
 
     user_id: int
     resume_id: int
     user_name: str
     local_only: bool = False
-    # The extracted resume text, used as the reference context for the
-    # hallucination guardrail so the agent cannot invent skills/positions/etc.
     resume_text: str = ""
     state: Dict[str, Any] = field(default_factory=dict)
 
@@ -305,11 +319,12 @@ def _calculate_yoe(date_ranges: Any, today: date | None = None) -> float:
     return round(whole_months / 12, 1)
 
 
-# NOTE: the parameter is annotated as a bare ``list`` on purpose. CrewAI turns
-# the annotation into the JSON schema Gemini sees ({"type": "array"}), which is
-# enough for the model to emit an array, while leaving the *elements* untyped so
-# every element-level problem (wrong type, malformed pair, bad date format) is
-# reported by the curated messages below instead of a generic pydantic error.
+# NOTE: the parameter is annotated as a bare ``list`` on purpose. LangChain
+# turns the annotation into the JSON schema the model sees ({"type": "array"}),
+# which is enough for the model to emit an array, while leaving the *elements*
+# untyped so every element-level problem (wrong type, malformed pair, bad date
+# format) is reported by the curated messages below instead of a generic
+# pydantic error.
 @tool("calculate_yoe")
 def calculate_yoe(date_ranges: list) -> float:
     """
@@ -361,8 +376,16 @@ def calculate_yoe(date_ranges: list) -> float:
     return years
 
 
-def make_save_parsed_resume_tool(ctx: ResumeAnalysisContext):
-    """Build the save_parsed_resume tool bound to one run's ``ctx``."""
+def make_save_parsed_resume_tool(ctx: ResumeAnalysisContext) -> BaseTool:
+    """
+    Build the save_parsed_resume tool bound to one run's ``ctx``.
+
+    Args:
+        ctx: The run's identity and shared state.
+
+    Returns:
+        The ``save_parsed_resume`` LangChain tool.
+    """
 
     @tool("save_parsed_resume")
     def save_parsed_resume(parsed_resume_json: str) -> str:
@@ -516,135 +539,40 @@ def make_save_parsed_resume_tool(ctx: ResumeAnalysisContext):
     return save_parsed_resume
 
 
-# Faithfulness score (0-10) the parsed JSON must meet against the resume text.
-_HALLUCINATION_THRESHOLD = 7
+# Resumes are short, but a pathological upload must not flood the context.
+_MAX_RESUME_CHARS = 100_000
 
 
-def _make_hallucination_guardrail(ctx: ResumeAnalysisContext):
+def make_read_resume_tool(resume_path: str) -> BaseTool:
     """
-    Build a CrewAI HallucinationGuardrail bound to this run's resume text, or
-    ``None`` when no reference text / LLM is available (e.g. the CLI path).
+    Build the read_resume tool bound to this run's extracted resume file.
 
-    The guardrail scores the parsed JSON's faithfulness against the extracted
-    resume text so the agent cannot invent skills, positions, or other facts.
+    The path is closured in, so the agent can read the applicant's resume and
+    nothing else on the filesystem.
 
-    NOTE: in the open-source crewai package this guardrail is a pass-through
-    (it logs a notice and returns the output unchanged) — real faithfulness
-    scoring runs only on the CrewAI enterprise platform (app.crewai.com). The
-    wiring here is intentionally forward-compatible: it activates automatically
-    when running against enterprise, and never rejects a correctly-saved resume
-    on open source.
+    Args:
+        resume_path: The run's extracted resume text (.md) file.
+
+    Returns:
+        The ``read_resume`` LangChain tool.
     """
-    if not ctx.resume_text:
-        return None
-    try:
-        from crewai.tasks.hallucination_guardrail import HallucinationGuardrail
 
-        from app.services.crew.agents import claude_llm_extraction
+    @tool("read_resume")
+    def read_resume() -> str:
+        """
+        Read the applicant's full resume as plain text. Takes no arguments —
+        the applicant's resume is already configured.
 
-        return HallucinationGuardrail(
-            context=ctx.resume_text,
-            llm=claude_llm_extraction,
-            threshold=_HALLUCINATION_THRESHOLD,
-        )
-    except Exception as e:  # noqa: BLE001 — never let guardrail setup break the run
-        logger.warning(
-            "resume_tools: could not build hallucination guardrail for resume %d: %s",
-            ctx.resume_id, e,
-        )
-        return None
-
-
-def make_parsed_resume_guardrail(
-    ctx: ResumeAnalysisContext,
-) -> Callable[[TaskOutput], tuple[bool, Any]]:
-    """
-    Build the resume-analysis task guardrail bound to one run's ``ctx``.
-
-    A task's ``guardrail`` accepts a single value, so this composes three checks:
-
-      1. The save-tool invariant — the task passes only when save_parsed_resume
-         reported success. This replaces the task output with the normalized
-         JSON so downstream tasks (profiler) receive the exact persisted
-         document, and — on failure — is what aborts the crew after the retry
-         budget is exhausted (CrewAI raises, ``kickoff()`` propagates it).
-      2. A URL-format check — every *_url field on the saved JSON must be a
-         valid http(s) URL or empty. (The save tool blocks invalid URLs before
-         it marks the run saved, so this is a secondary net.)
-      3. A CrewAI HallucinationGuardrail — once the save is confirmed, the
-         normalized JSON is scored for faithfulness against the extracted
-         resume text so the agent cannot invent skills, positions, or other
-         facts. A failed check returns feedback for a retry; a guardrail
-         *error* (e.g. LLM unavailable) fails open so a transient outage does
-         not block a correctly-saved resume.
-    """
-    hallucination_guardrail = _make_hallucination_guardrail(ctx)
-
-    def parsed_resume_guardrail(task_output: TaskOutput) -> tuple[bool, Any]:
-        # 1. Save-tool invariant (load-bearing — aborts the crew on failure).
-        if not (ctx.state.get("saved") and ctx.state.get("json")):
-            logger.warning(
-                "resume_tools: guardrail rejected resume-analysis output for resume "
-                "%d — no successful save recorded", ctx.resume_id,
-            )
-            return (
-                False,
-                "The parsed resume was NOT saved. You MUST call the save_parsed_resume "
-                "tool with the complete parsed resume JSON and get a SUCCESS response "
-                "before producing your final answer. Fix any ERROR the tool reports "
-                "and try again.",
-            )
-
-        normalized = ctx.state["json"]
-
-        # 2. URL-format check on the saved JSON (secondary net; the save tool
-        # already blocks invalid URLs).
+        Returns:
+            str: The resume text, or "ERROR: ..." if it cannot be read.
+        """
         try:
-            saved = ParsedResume.model_validate_json(normalized)
-            invalid_urls = find_invalid_url_fields(saved.result)
-        except ValidationError:
-            invalid_urls = []
-        if invalid_urls:
-            logger.warning(
-                "resume_tools: guardrail found invalid URL field(s) %s for resume %d",
-                invalid_urls, ctx.resume_id,
-            )
-            return (
-                False,
-                f"These URL fields are not valid URLs: {', '.join(invalid_urls)}. "
-                "Every *_url field must be a complete http(s) URL or an empty "
-                "string \"\". If only the link's label/anchor text is visible (not "
-                "the actual URL), set that field to \"\". Fix these and call "
-                "save_parsed_resume again.",
-            )
+            with open(resume_path, encoding="utf-8") as f:
+                text = f.read(_MAX_RESUME_CHARS)
+        except OSError as e:
+            logger.error("resume_tools: could not read resume '%s': %s", resume_path, e)
+            return f"ERROR: The resume could not be read: {e}."
+        logger.info("resume_tools: read_resume returned %d chars", len(text))
+        return text
 
-        # 3. Hallucination check against the resume text.
-        if hallucination_guardrail is not None:
-            try:
-                validated_output = TaskOutput(
-                    description=task_output.description,
-                    raw=normalized,
-                    agent=task_output.agent,
-                )
-                is_faithful, feedback = hallucination_guardrail(validated_output)
-            except Exception as e:  # noqa: BLE001 — fail open on guardrail errors
-                logger.warning(
-                    "resume_tools: hallucination guardrail errored for resume %d "
-                    "(passing the saved output through): %s", ctx.resume_id, e,
-                )
-                return True, normalized
-            if not is_faithful:
-                logger.warning(
-                    "resume_tools: hallucination guardrail flagged resume %d: %s",
-                    ctx.resume_id, feedback,
-                )
-                return (
-                    False,
-                    "The extracted data was not fully grounded in the resume. "
-                    f"{feedback} Re-extract using ONLY facts present in the resume, "
-                    "then call save_parsed_resume again with the corrected JSON.",
-                )
-
-        return True, normalized
-
-    return parsed_resume_guardrail
+    return read_resume

@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Startup parsed_resume_path migration skipped: %s", exc)
 
         # Same lightweight-migration policy: add the jobs columns for the
-        # docx/pdf tailored-resume artifacts (written by the crew runner) if
+        # docx/pdf tailored-resume artifacts (written by the pipeline runner) if
         # they are missing. Idempotent and best-effort.
         try:
             def _add_tailored_artifact_columns(sync_conn):

@@ -79,6 +79,19 @@ gcloud sql instances create job-applier-mysql \
 
 > **Cost:** `db-f1-micro` costs approximately $7/month.
 
+Windows PowerShell equivalent:
+
+```powershell
+gcloud sql instances create job-applier-mysql `
+  --database-version=MYSQL_8_0 `
+  --tier=db-f1-micro `
+  --region=asia-south2 `
+  --root-password=YOUR_SECURE_ROOT_PASSWORD `
+  --storage-type=SSD `
+  --storage-size=10GB `
+  --project=YOUR_PROJECT_ID
+```
+
 ### 5b. Create the application database
 
 ```bash
@@ -87,21 +100,160 @@ gcloud sql databases create job_applier \
   --project=YOUR_PROJECT_ID
 ```
 
-### 5c. Authorize Local IP for Direct Connection
+Windows PowerShell equivalent:
 
-Instead of running a proxy, authorize your local development machine's public IPv4 address to connect directly to the Cloud SQL instance:
-
-```bash
-# Get your current public IPv4 address
-curl -4 ifconfig.me
-
-# Authorize your IP in Cloud SQL
-gcloud sql instances patch job-applier-mysql \
-  --authorized-networks="YOUR_PUBLIC_IP/32" \
+```powershell
+gcloud sql databases create job_applier `
+  --instance=job-applier-mysql `
   --project=YOUR_PROJECT_ID
 ```
 
-Set `MYSQL_HOST` in your `.env` to the Cloud SQL instance's public IP address (which can be retrieved using `gcloud sql instances list`).
+### 5c. Connect with the Cloud SQL Auth Proxy (recommended for local development)
+
+The Auth Proxy avoids authorizing your changing public IP. It makes an
+authenticated, encrypted connection to Cloud SQL and exposes it locally on
+`127.0.0.1:3306`. You do **not** need to add an authorized network for this
+connection. Keep the instance's public IP enabled for the proxy's default
+connectivity.
+
+1. **Grant proxy access.** Complete [Step 7](#7-create-a-service-account-and-generate-json-key)
+   and use the `job-agent-sa` key configured in `GOOGLE_APPLICATION_CREDENTIALS`.
+   The account needs the **Cloud SQL Client** role (granted in Step 7).
+2. **Install the proxy.** Download the latest Cloud SQL Auth Proxy v2 binary
+   for your OS and architecture from the [Cloud SQL Auth Proxy installation
+   guide](https://cloud.google.com/sql/docs/mysql/connect-auth-proxy#install).
+   On Ubuntu, make it executable and put it on your `PATH`; on Windows, put
+   `cloud-sql-proxy.exe` on your `PATH` or note its full path.
+
+   Ubuntu (after downloading the Linux AMD64 binary to `~/Downloads`):
+
+   ```bash
+   sudo install -m 755 ~/Downloads/cloud-sql-proxy /usr/local/bin/cloud-sql-proxy
+   cloud-sql-proxy --version
+   ```
+
+   Windows PowerShell (after downloading the Windows AMD64 binary):
+
+   ```powershell
+   $proxyDir = "$HOME\cloud-sql-proxy"
+   New-Item -ItemType Directory -Force -Path $proxyDir | Out-Null
+   Move-Item "$HOME\Downloads\cloud-sql-proxy.exe" "$proxyDir\cloud-sql-proxy.exe"
+   $env:PATH = "$proxyDir;$env:PATH"
+   cloud-sql-proxy.exe --version
+   ```
+
+   The PowerShell `PATH` change applies to the current terminal. Set it again
+   in any new terminal, or add the folder to your user `PATH` permanently.
+3. **Configure the backend** in `backend/.env`. Use the credential path format
+   for your OS:
+
+   ```env
+   GCP_PROJECT_ID=YOUR_PROJECT_ID
+   GCP_LOCATION=asia-south2
+   MYSQL_HOST=127.0.0.1
+   MYSQL_PORT=3306
+   MYSQL_USER=root
+   MYSQL_PASSWORD=YOUR_SECURE_ROOT_PASSWORD
+   MYSQL_DATABASE=job_applier
+   ```
+
+   Ubuntu example:
+
+   ```env
+   GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
+   ```
+
+   Windows PowerShell example:
+
+   ```env
+   GOOGLE_APPLICATION_CREDENTIALS=C:\absolute\path\to\service-account.json
+   ```
+
+4. **Start the app with the proxy.** From the `backend` directory, run the
+   same command in Ubuntu or Windows PowerShell:
+
+   ```bash
+   uv run dev
+   ```
+
+   This starts the proxy, API, and frontend together. Alternatively, run
+   `uv run db-proxy` in one terminal and `uv run api` in another. If the
+   executable is not on `PATH`, set its path before starting either command.
+   On Ubuntu:
+
+   ```bash
+   export CLOUD_SQL_PROXY_BIN=/path/to/cloud-sql-proxy
+   ```
+
+   On Windows PowerShell:
+
+   ```powershell
+   $env:CLOUD_SQL_PROXY_BIN = "C:\path\to\cloud-sql-proxy.exe"
+   ```
+
+   The project builds the instance connection name from `GCP_PROJECT_ID`,
+   `GCP_LOCATION`, and `job-applier-mysql`. Confirm the name in either shell:
+
+   ```bash
+   gcloud sql instances describe job-applier-mysql \
+     --project=YOUR_PROJECT_ID \
+     --format="value(connectionName)"
+   ```
+
+   PowerShell:
+
+   ```powershell
+   gcloud sql instances describe job-applier-mysql `
+     --project=YOUR_PROJECT_ID `
+     --format="value(connectionName)"
+   ```
+
+### 5d. Alternative: authorize your current IP for a direct connection
+
+You can connect directly without running the proxy, but this requires a static
+public IP or updating Cloud SQL's authorized networks whenever your public IP
+changes. Do not authorize `0.0.0.0/0`.
+
+1. Get your current public IPv4 address.
+
+   Ubuntu:
+
+   ```bash
+   curl -4 -s https://api.ipify.org
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   (Invoke-RestMethod -Uri "https://api.ipify.org")
+   ```
+
+2. In Google Cloud Console, open **Cloud SQL → Instances →
+   job-applier-mysql → Connections → Networking**, add the address with `/32`
+   (for example, `203.0.113.10/32`), and save. This avoids replacing any other
+   authorized networks already configured on the instance.
+3. Set `MYSQL_HOST` in `backend/.env` to the instance's public IP address.
+   Find it in **Cloud SQL → Instances → job-applier-mysql → Overview** or run
+   the command for your shell.
+
+   Ubuntu:
+
+   ```bash
+   gcloud sql instances describe job-applier-mysql \
+     --project=YOUR_PROJECT_ID \
+     --format="value(ipAddresses[0].ipAddress)"
+   ```
+
+   Windows PowerShell:
+
+   ```powershell
+   gcloud sql instances describe job-applier-mysql `
+     --project=YOUR_PROJECT_ID `
+     --format="value(ipAddresses[0].ipAddress)"
+   ```
+
+   Set `MYSQL_PORT=3306`. Start the API normally; do not start the proxy. If
+   your public IP changes, update the authorized network before reconnecting.
 
 > **Note:** Database tables (`users`, `github_profiles`, `resumes`, `jobs`) are created automatically on first backend startup.
 
@@ -111,18 +263,31 @@ Set `MYSQL_HOST` in your `.env` to the Cloud SQL instance's public IP address (w
 
 This bucket stores uploaded and tailored resume files.
 
-```bash
-# Create the bucket
-gsutil mb \
-  -l asia-south2 \
-  -c STANDARD \
-  gs://job-applier-YOUR_PROJECT_ID-resumes
+Use the current `gcloud storage` command to create the bucket and enable
+uniform bucket-level access in one step.
 
-# Enable uniform bucket-level access (security best practice)
-gsutil uniformbucketlevelaccess set on gs://job-applier-YOUR_PROJECT_ID-resumes
+Ubuntu:
+
+```bash
+gcloud storage buckets create gs://job-applier-YOUR_PROJECT_ID-resumes \
+  --project=YOUR_PROJECT_ID \
+  --location=asia-south2 \
+  --uniform-bucket-level-access
 ```
 
-Replace `YOUR_PROJECT_ID` with your actual GCP project ID (e.g., `project-69718baa-b6cc-44ec-9fb`).
+Windows PowerShell:
+
+```powershell
+gcloud storage buckets create gs://job-applier-YOUR_PROJECT_ID-resumes `
+  --project=YOUR_PROJECT_ID `
+  --location=asia-south2 `
+  --uniform-bucket-level-access
+```
+
+Replace `YOUR_PROJECT_ID` in both places with your actual GCP project ID.
+Bucket names must be globally unique. `--location` sets the bucket's location,
+and uniform bucket-level access is enabled at creation; no separate `gsutil`
+command is needed.
 
 ---
 
@@ -150,6 +315,32 @@ gcloud iam service-accounts keys create ./service-account.json \
   --project=YOUR_PROJECT_ID
 ```
 
+Windows PowerShell equivalent:
+
+```powershell
+# Create the service account
+gcloud iam service-accounts create job-agent-sa `
+  --description="Job Application Agent Service Account" `
+  --display-name="Job Agent SA" `
+  --project=YOUR_PROJECT_ID
+
+# Assign required roles
+$SA_EMAIL = "job-agent-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID `
+  --member="serviceAccount:$SA_EMAIL" `
+  --role="roles/cloudsql.client"
+
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID `
+  --member="serviceAccount:$SA_EMAIL" `
+  --role="roles/storage.objectAdmin"
+
+# Download the JSON key to the current directory
+gcloud iam service-accounts keys create .\service-account.json `
+  --iam-account="$SA_EMAIL" `
+  --project=YOUR_PROJECT_ID
+```
+
 > **Security:** Store `service-account.json` securely and **never commit it to version control**. It is already listed in `.gitignore`.
 
 ---
@@ -168,11 +359,13 @@ gcloud iam service-accounts keys create ./service-account.json \
 
 ## 9. Configure Environment Variables
 
-Update your `.env` file in the root of the project:
+Update `backend/.env` with the values for your environment:
 
 ```env
 # ── GCP Core ──────────────────────────────────────────────────────
-# Path to the downloaded Service Account JSON key
+# Path to the downloaded Service Account JSON key.
+# Ubuntu: /absolute/path/to/service-account.json
+# Windows: C:\absolute\path\to\service-account.json
 GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
 
 # Your GCP Project ID
@@ -231,8 +424,10 @@ SERPER_API_KEY=...
 - [ ] Cloud Storage API Enabled
 - [ ] Cloud SQL instance created (`job-applier-mysql`, `db-f1-micro`, `asia-south2`)
 - [ ] MySQL database created (`job_applier`)
-- [ ] Local IPv4 authorized in Cloud SQL Instance settings
+- [ ] Choose a local Cloud SQL connection method:
+  - [ ] Cloud SQL Auth Proxy installed and configured (recommended; no authorized network needed)
+  - [ ] Current public IPv4 authorized with `/32` and `MYSQL_HOST` set to the instance's public IP
 - [ ] GCS bucket created (`job-applier-YOUR_PROJECT_ID-resumes`)
 - [ ] Service Account roles added: `Cloud SQL Client`, `Storage Object Admin`
-- [ ] `.env` updated with `MYSQL_*`, `GCS_BUCKET_NAME`, `JWT_SECRET_KEY`
+- [ ] `backend/.env` updated with `MYSQL_*`, `GCS_BUCKET_NAME`, `JWT_SECRET_KEY`
 - [ ] Google OAuth credentials created (optional, for Google Sign-In)

@@ -11,8 +11,8 @@ filters applied on every read (see :func:`build_filter`).
 Design notes:
 
 * **Client lifetime.** The v4 client owns HTTP and gRPC connection pools, so it
-  is created once per process and closed at exit. The crew runs under
-  ``crew_runner._executor`` (a ThreadPoolExecutor), hence the lock around
+  is created once per process and closed at exit. The pipeline runs under
+  ``pipeline_runner._executor`` (a ThreadPoolExecutor), hence the lock around
   construction.
 
 * **Deterministic object IDs.** Each chunk's UUID is a UUIDv5 of
@@ -163,7 +163,7 @@ def build_filter(
     Compose the tenancy filter for a search.
 
     ``repo_username`` scopes results to one GitHub account — this is what keeps
-    one applicant's crew from retrieving another applicant's repo content.
+    one applicant's run from retrieving another applicant's repo content.
     ``repo_names`` optionally narrows further to specific repositories.
     """
     clauses: List[FilterReturn] = []

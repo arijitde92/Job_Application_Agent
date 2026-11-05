@@ -7,7 +7,7 @@ Tables:
     - users: User accounts (email/password or OAuth)
     - github_profiles: Linked GitHub accounts per user
     - resumes: Uploaded resume files tracked in GCS
-    - jobs: Crew execution records with status tracking
+    - jobs: Pipeline run records with status tracking
 """
 
 from datetime import datetime

@@ -1,6 +1,6 @@
 # Job Application Agent
 
-A powerful, multi-agent automation system for job applications, leveraging [Crew AI](https://www.crewai.com/) to orchestrate specialized agents that extract, analyze, and summarize job postings, tailor resumes, and prepare interview materials. Semantic search over your GitHub projects runs on a [Weaviate](https://weaviate.io/) vector store with [Voyage AI](https://www.voyageai.com/) embeddings and reranking, and the system features custom tools for LinkedIn and GitHub data extraction plus Serper-backed web research.
+A powerful, multi-agent automation system for job applications, built on [LangChain](https://python.langchain.com/) agents orchestrated as a [LangGraph](https://langchain-ai.github.io/langgraph/) state graph — with [LangSmith](https://smith.langchain.com/) tracing — in which specialized agents extract, analyze, and summarize job postings, tailor resumes, and prepare interview materials. Semantic search over your GitHub projects runs on a [Weaviate](https://weaviate.io/) vector store with [Voyage AI](https://www.voyageai.com/) embeddings and reranking, and the system features custom tools for LinkedIn and GitHub data extraction plus Serper-backed web research.
 
 This project also includes a **Full-Stack Web App version** with a **FastAPI backend** (using Google Cloud SQL MySQL and GCS storage) and a **React + Vite frontend** that displays live agent execution progress via Server-Sent Events (SSE).
 
@@ -12,12 +12,12 @@ The final Word (.docx) resume is rendered by a **separate live microservice** de
 
 ```
 Job_Application_Agent/
-├── backend/                # FastAPI backend + CrewAI pipeline (uv-managed)
+├── backend/                # FastAPI backend + LangGraph agent pipeline (uv-managed)
 │   ├── app/
 │   │   ├── api/            # Route handlers (api/v1) + shared deps
 │   │   ├── core/           # config, security, database, logging
-│   │   ├── services/       # GCS, crew runner, CrewAI pipeline, extractors,
-│   │   │                   #   vector_store (Weaviate + Voyage)
+│   │   ├── services/       # GCS, pipeline runner, LangGraph pipeline (pipeline/),
+│   │   │                   #   extractors, vector_store (Weaviate + Voyage)
 │   │   ├── models/         # SQLAlchemy ORM models
 │   │   ├── schemas/        # Pydantic schemas
 │   │   └── main.py         # App init + CORS + routers
@@ -40,7 +40,7 @@ Job_Application_Agent/
 
 | Requirement | Version / Notes |
 | ----------- | --------------- |
-| **Python** | 3.11+ (3.12 recommended). You don't need to install it manually — `uv` will fetch a matching interpreter. |
+| **Python** | 3.11+ (pinned to 3.12 by [backend/.python-version](backend/.python-version), since some dependencies have no wheels for newer versions yet). You don't need to install it manually — `uv` will fetch a matching interpreter. |
 | **[uv](https://docs.astral.sh/uv/)** | The Python package & project manager used here. Install: `curl -LsSf https://astral.sh/uv/install.sh \| sh` (then restart your shell so `~/.local/bin` is on `PATH`). |
 | **Node.js** | 18+ (with `npm`), for the React frontend. [Download](https://nodejs.org/en/download). |
 | **Google Cloud account** | A GCP project with the **Cloud SQL Admin** and **Cloud Storage** APIs enabled, plus a **service-account JSON key**. BigQuery and Vertex AI are **no longer required** — the vector store moved off GCP. See [backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md). |
@@ -102,14 +102,17 @@ uv run frontend   # Vite dev server     → http://localhost:5173
 ```
 
 See **[backend/README.md](backend/README.md)** for the full command list,
-env-var overrides, and the standalone crew CLI.
+env-var overrides, the standalone pipeline CLI, and LangSmith tracing.
 
 ---
 
 ## 🚀 Features
 
-- **Multi-Agent Orchestration:** Uses Crew AI to coordinate agents for GitHub analysis, resume parsing, profiling, resume tailoring, and interview preparation.
-- **Custom Tools:** Includes LinkedIn job extractor, GitHub repo summarizer, and Serper web search, built using Crew AI's extensible tool system.
+- **Multi-Agent Orchestration:** A LangGraph `StateGraph` coordinates LangChain `create_agent` agents for GitHub analysis, resume parsing, profiling, resume tailoring, and interview preparation — with GitHub analysis and resume parsing fanned out in parallel and joined before profiling.
+- **Custom Tools:** Includes LinkedIn job extractor, GitHub repo summarizer, web scraping and Serper web search, built with LangChain's `@tool` decorator; per-run tools have the applicant's identity bound in, so the LLM never chooses whose data it touches.
+- **Agent Middleware:** A shared LangChain middleware stack gives every agent tool-error recovery (errors come back as observations), a step budget that forces a final answer, automatic conversation summarization near the context limit, and per-agent rate limiting.
+- **Guardrails:** The parsed resume must be saved, carry only valid URLs, and pass a **Claude faithfulness judge** (≥ 7/10 against the resume text); failures are sent back to the agent with feedback for up to 3 retries.
+- **LangSmith Observability:** One trace per job — parallel branches, named agent subgraphs, every model and tool call, the judge — tagged with job / user / resume metadata.
 - **Weaviate + Voyage AI:** Stores and semantically searches GitHub project data in a Weaviate vector store, using Voyage AI's code-specialised `voyage-code-3` embeddings and a `rerank-2.5-lite` second-stage reranker.
 - **Structured Resume Parsing:** A dedicated Resume Analyzer agent extracts the resume into a validated JSON schema, deriving years of experience with a deterministic tool rather than LLM arithmetic.
 - **Automated Resume Tailoring:** Aligns your resume with job requirements and optimizes for ATS.
@@ -121,10 +124,12 @@ env-var overrides, and the standalone crew CLI.
 
 ## 🧑‍💻 Agents & Tools
 
-### Crew AI Multi-Agent System
+### LangChain + LangGraph Multi-Agent System
 
-- **Crew AI** ([Homepage](https://www.crewai.com/)): The backbone of the system, enabling modular, collaborative agent workflows.
-- **Agents:** (each runs on the LLM best suited to its task — see [backend/app/services/crew/agents.py](backend/app/services/crew/agents.py))
+- **[LangChain](https://python.langchain.com/)** provides the agents (`create_agent` + middleware), the tools and the model integrations (`langchain-google-genai`, `langchain-anthropic`, `langchain-openai`).
+- **[LangGraph](https://langchain-ai.github.io/langgraph/)** orchestrates them as a state graph ([backend/app/services/pipeline/graph.py](backend/app/services/pipeline/graph.py)).
+- **[LangSmith](https://smith.langchain.com/)** traces every run (optional, env-controlled).
+- **Agents:** (each runs on the LLM best suited to its task — see [backend/app/services/pipeline/agents.py](backend/app/services/pipeline/agents.py))
 
   | Agent | Role | LLM |
   | ----- | ---- | --- |
@@ -134,16 +139,18 @@ env-var overrides, and the standalone crew CLI.
   | **Resume Strategist** | Tailors your resume for each job. | Gemini |
   | **Interview Preparer** | Researches the employer via web search, then prepares interview questions and talking points. | Gemini |
 
-  The GitHub summary and resume analysis tasks run **in parallel**; profiling waits
-  on both. When no GitHub profile is supplied, that agent and its task are skipped
-  entirely and the rest run under explicit grounding rules so nothing is fabricated.
+  `START` fans out to the `github_summary` and `resume_analysis` nodes, which run
+  **in parallel**; the `profile` node joins them and starts only when both have
+  finished. When no GitHub profile is supplied, the GitHub node is left out of the
+  graph entirely and the rest run under explicit grounding rules so nothing is
+  fabricated.
 
-### Crew AI Tools Used
+### LangChain Tools
 
-- **FileReadTool:** Reads and processes resume files.
-- **ScrapeWebsiteTool:** Scrapes web content for job and company info.
-- **MDXSearchTool:** Performs semantic search on resume content.
-- **SerperDevTool:** Web search for the Resume Strategist.
+- **`read_resume`:** Reads the applicant's extracted resume — a per-run tool bound to that one file, so agents cannot read anything else on disk.
+- **`scrape_website`:** Fetches a page (requests + BeautifulSoup) and returns its readable text, for company and interview research.
+- **`web_search`:** Serper-backed Google search, shared by the Resume Strategist and the Interview Preparer (see below).
+- **Bright Data MCP:** LinkedIn pages are scraped through Bright Data's MCP server, called via [`langchain-mcp-adapters`](https://github.com/langchain-ai/langchain-mcp-adapters).
 
 ### Custom Tools
 
@@ -157,7 +164,7 @@ env-var overrides, and the standalone crew CLI.
   falls back to the resume and job details alone, so a search outage cannot sink a
   run whose resume tailoring has already completed.
 - **Weaviate/Voyage AI Integration:** Custom logic to chunk, embed, upsert, and search GitHub repo content — one shared Weaviate collection, with every search scoped to the applicant's own repositories.
-- **Resume Tools:** A `calculate_yoe` tool for deterministic years-of-experience arithmetic and a per-run `save_parsed_resume` tool that validates the JSON against the schema before persisting it.
+- **Resume Tools:** A `calculate_yoe` tool for deterministic years-of-experience arithmetic and a per-run `save_parsed_resume` tool that validates the JSON against the schema before persisting it. The resume guardrail middleware then has a Claude judge score the saved JSON's faithfulness to the resume.
 - **DOCX Generator (`generate_resume_docx`):** A per-run tool for the Resume Strategist that POSTs the tailored resume JSON to the live document-generation microservice (`POST /api/v1/resume/generate` on [arijitde92/resume_docx_generator](https://github.com/arijitde92/resume_docx_generator)) and saves the returned Word (.docx) resume. The tool wraps the agent's content in the service's metadata envelope deterministically and enforces a 3-attempt retry cap, after which the run falls back to Markdown output.
 
 ---
@@ -168,8 +175,11 @@ env-var overrides, and the standalone crew CLI.
   environment management (see `backend/pyproject.toml`)
 - **FastAPI** backend (async SQLAlchemy + Cloud SQL MySQL, JWT/Google OAuth auth)
 - **React + Vite** frontend with live progress via Server-Sent Events (SSE)
-- **Crew AI** for agent orchestration, across **Gemini**, **GLM-5.2** (Z.ai) and
-  **Claude Sonnet 5** depending on the agent
+- **LangChain 1.x** agents (`create_agent` + middleware) orchestrated with
+  **LangGraph**, across **Gemini** (`langchain-google-genai`), **GLM-5.2** via
+  Z.ai's OpenAI-compatible API (`langchain-openai`) and **Claude Sonnet 5**
+  (`langchain-anthropic`) depending on the agent
+- **LangSmith** for tracing (optional)
 - **Weaviate Cloud** as the vector store for GitHub repo embeddings
 - **Voyage AI** for code-specialised embeddings (`voyage-code-3`) and reranking
   (`rerank-2.5-lite`)
@@ -178,8 +188,8 @@ env-var overrides, and the standalone crew CLI.
   that renders the tailored resume JSON into a Word document
   ([source](https://github.com/arijitde92/resume_docx_generator)); the backend
   converts the returned .docx to PDF with **LibreOffice headless**
-- **Bright Data MCP** for LinkedIn job scraping; **LangChain** for document
-  loading and chunking
+- **Bright Data MCP** (via `langchain-mcp-adapters`) for LinkedIn job scraping;
+  LangChain document loaders / text splitters for GitHub repo ingestion
 
 ---
 
@@ -198,8 +208,8 @@ flowchart LR
 
     subgraph Backend["FastAPI backend :8000"]
         API["API routers<br/>/api/auth · /api/resumes<br/>/api/github · /api/jobs"]
-        Runner["crew_runner<br/>ThreadPoolExecutor (4 jobs)<br/>+ progress store"]
-        Crew["CrewAI pipeline<br/>agents · tasks · tools"]
+        Runner["pipeline_runner<br/>ThreadPoolExecutor (4 jobs)<br/>+ progress store"]
+        Graph["LangGraph pipeline<br/>LangChain agents · middleware · tools"]
         PDF["docx_to_pdf<br/>LibreOffice headless"]
     end
 
@@ -216,29 +226,31 @@ flowchart LR
         SERP["Serper<br/>web search"]
         LLM["LLMs<br/>Gemini · GLM-5.2 · Claude Sonnet 5"]
         DOCX["Resume DOCX microservice<br/>FastAPI on AWS ECS Fargate + ALB<br/>POST /api/v1/resume/generate"]
+        LS["LangSmith<br/>tracing (optional)"]
     end
 
     User --> UI
     UI -->|"REST + JWT / Google OAuth"| API
     SSE <-->|"text/event-stream"| API
-    API --> Runner --> Crew
+    API --> Runner --> Graph
     API <--> SQL
     API <--> GCS
     Runner <--> GCS
-    Crew --> BD
-    Crew --> GH
-    Crew <--> WV
+    Runner -->|"Bright Data MCP<br/>(langchain-mcp-adapters)"| BD
+    Graph --> GH
+    Graph <--> WV
     WV -.->|"embed & rerank"| VOY
-    Crew --> SERP
-    Crew --> LLM
-    Crew -->|"tailored resume JSON"| DOCX
-    DOCX -->|".docx bytes"| Crew
-    Crew --> PDF
+    Graph --> SERP
+    Graph --> LLM
+    Graph -->|"tailored resume JSON"| DOCX
+    DOCX -->|".docx bytes"| Graph
+    Runner --> PDF
     PDF -->|".docx + .pdf"| GCS
+    Graph -.->|"traces"| LS
 
     classDef ext fill:#fff4e6,stroke:#e8a33d,color:#000
     classDef svc fill:#e6f0ff,stroke:#4a7fd4,color:#000
-    class BD,GH,WV,VOY,SERP,LLM,DOCX ext
+    class BD,GH,WV,VOY,SERP,LLM,DOCX,LS ext
     class SQL,GCS svc
 ```
 
@@ -249,14 +261,16 @@ flowchart TD
     Start(["Job submitted<br/>LinkedIn URL + resume + GitHub URL"]) --> Extract["Extract job details<br/>Bright Data MCP → JobDetails JSON"]
     Extract --> Parse["Parse resume file<br/>.pdf / .docx / .md → text"]
 
-    Parse --> A1["GitHub Project Summarizer<br/><i>GLM-5.2</i><br/>index repos → Weaviate,<br/>retrieve + rerank relevant projects"]
-    Parse --> A2["Resume Analyzer<br/><i>Claude Sonnet 5</i><br/>resume → validated JSON<br/>(calculate_yoe · save_parsed_resume)"]
+    Parse -->|"graph START<br/>(fan-out)"| A1["github_summary<br/>GitHub Project Summarizer · <i>GLM-5.2</i><br/>index repos → Weaviate,<br/>retrieve + rerank relevant projects"]
+    Parse -->|"graph START<br/>(fan-out)"| A2["resume_analysis<br/>Resume Analyzer · <i>Claude Sonnet 5</i><br/>resume → validated JSON<br/>(calculate_yoe · save_parsed_resume)"]
 
-    A1 --> A3
-    A2 --> A3
+    A2 --> Guard{"Guardrail middleware<br/>saved? valid URLs?<br/>Claude faithfulness ≥ 7/10"}
+    Guard -->|"fail → feedback<br/>(≤ 3 retries)"| A2
+    Guard -->|"pass"| A3
+    A1 -->|"fan-in"| A3
 
-    A3["Profiler<br/><i>Gemini</i><br/>compile personal & professional profile"]
-    A3 --> A4["Resume Strategist<br/><i>Gemini</i><br/>tailor resume · optimise for ATS"]
+    A3["profile<br/>Profiler · <i>Gemini</i><br/>compile personal & professional profile"]
+    A3 --> A4["resume_strategy<br/>Resume Strategist · <i>Gemini</i><br/>tailor resume · optimise for ATS"]
 
     A4 --> Tool{"generate_resume_docx<br/>≤ 3 attempts"}
     Tool -->|"success"| Conv["LibreOffice headless<br/>.docx → .pdf"]
@@ -264,7 +278,7 @@ flowchart TD
     Conv --> A5
     MD --> A5
 
-    A5["Interview Preparer<br/><i>Gemini</i><br/>web_search company research →<br/>questions & talking points"]
+    A5["interview_preparation<br/>Interview Preparer · <i>Gemini</i><br/>web_search company research →<br/>questions & talking points"]
     A5 --> Store["Upload outputs to GCS<br/>update job row in Cloud SQL"]
     Store --> Done(["Job completed → SSE 'done'"])
 
@@ -276,8 +290,9 @@ flowchart TD
     style Parallel fill:#f4f4f8,stroke:#bbb
 ```
 
-> The GitHub agent and its task are **skipped entirely** when no GitHub profile is
-> supplied; the remaining agents then run under explicit grounding rules.
+> The `github_summary` node is **left out of the graph** when no GitHub profile is
+> supplied; the remaining agents then run under explicit grounding rules. If the
+> resume guardrail exhausts its retries, the whole run aborts before `profile`.
 
 ### Request lifecycle
 
@@ -288,8 +303,8 @@ sequenceDiagram
     participant FE as React frontend
     participant API as FastAPI (jobs router)
     participant DB as Cloud SQL
-    participant CR as crew_runner (thread pool)
-    participant CW as CrewAI agents
+    participant CR as pipeline_runner (thread pool)
+    participant CW as LangGraph agents
     participant MS as DOCX microservice (AWS)
     participant GCS as Cloud Storage
 
@@ -297,13 +312,13 @@ sequenceDiagram
     FE->>API: POST /api/jobs/tailor
     API->>DB: INSERT job (status=pending)
     API-->>FE: 201 { job_id }
-    API->>CR: asyncio.create_task(run_crew_for_job)
+    API->>CR: asyncio.create_task(run_pipeline_for_job)
     CR->>GCS: Download stored resume bytes
     FE->>API: GET /api/jobs/{job_id}/progress (SSE)
 
-    loop Each pipeline step
-        CR->>CW: Run next agent/task
-        CW-->>CR: Step result
+    CR->>CW: graph.stream(inputs, stream_mode="updates")
+    loop Each node update
+        CW-->>CR: node finished (state delta)
         CR->>CR: progress_store[job_id] = step
         API-->>FE: event: progress { current_step }
     end
@@ -350,6 +365,14 @@ ZAI_API_KEY=...                  # GitHub Project Summarizer (GLM-5.2)
 ZAI_BASE_URL=                    # optional override; blank = https://api.z.ai/api/paas/v4
 SERPER_API_KEY=...               # web search (Interview Preparer research)
 
+# ── LangSmith tracing (optional) ─────────────────────────────────
+# Traces contain resume text and other personal data — enable only for a
+# LangSmith workspace you are allowed to store applicant data in.
+LANGSMITH_TRACING=false
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=job-application-agent
+LANGSMITH_ENDPOINT=              # optional (EU / self-hosted); blank = default
+
 # ── Resume DOCX generation microservice ──────────────────────────
 # Live service on AWS (ECS Fargate + ALB). Source & self-hosting instructions:
 #   https://github.com/arijitde92/resume_docx_generator
@@ -383,21 +406,22 @@ service account), see **[backend/docs/GCP_Setup.md](backend/docs/GCP_Setup.md)**
 
 ---
 
-## 🖥️ Standalone Crew CLI (no web app)
+## 🖥️ Standalone Pipeline CLI (no web app)
 
-You can run the agent pipeline directly, without the frontend/DB, from `backend/`:
+You can run the LangGraph pipeline directly, without the frontend/DB, from `backend/`:
 
 ```bash
 cd backend
-uv run crew \
+uv run pipeline \
     --url https://www.linkedin.com/jobs/view/<id>/ \
     --github https://github.com/<user> \
-    --resume sample_data/Arijit_De_Resume.md \
+    --resume "sample_data/Arijit De Resume 2026.md" \
     --name "Your Name"
 ```
 
 This extracts the job, indexes the GitHub repos into Weaviate, parses and tailors
-the resume, and writes interview materials — same pipeline the web app drives.
+the resume, and writes the tailored resume and interview materials as Markdown —
+the same graph the web app drives. Pass `--github ""` to skip GitHub.
 
 ---
 
@@ -413,18 +437,21 @@ All keys go in `backend/.env`.
 - **Weaviate:** Create a cluster at [Weaviate Cloud](https://console.weaviate.cloud/) → `WEAVIATE_URL` + `WEAVIATE_API_KEY` (GitHub repo vector store).
 - **Voyage AI:** [Get an API key](https://www.voyageai.com/) → `VOYAGE_API_KEY` (embeddings + reranking for the GitHub RAG pipeline).
 - **Gemini:** [Get a Gemini API key](https://aistudio.google.com/app/apikey) → `GEMINI_API_KEY` (Profiler, Resume Strategist, Interview Preparer, and the RAGAS judge).
-- **Anthropic:** [Get an API key](https://console.anthropic.com/) → `ANTHROPIC_API_KEY` (the Resume Analyzer runs on Claude Sonnet 5).
+- **Anthropic:** [Get an API key](https://console.anthropic.com/) → `ANTHROPIC_API_KEY` (the Resume Analyzer and its faithfulness judge run on Claude Sonnet 5).
 - **Z.ai:** [Get an API key](https://z.ai/) → `ZAI_API_KEY` (the GitHub Project Summarizer runs on GLM-5.2).
 - **Bright Data:** [Get an API key](https://brightdata.com/) for the MCP scraper → `BRIGHT_DATA_API_KEY` (LinkedIn job extraction).
-- **Serper:** [Get a Serper API key](https://serper.dev/) → `SERPER_API_KEY` (the `web_search` tool). Strictly optional — without it the crew still runs end to end, but the Interview Preparer loses its company research and works from the resume and job details alone.
+- **Serper:** [Get a Serper API key](https://serper.dev/) → `SERPER_API_KEY` (the `web_search` tool). Strictly optional — without it the pipeline still runs end to end, but the Interview Preparer loses its company research and works from the resume and job details alone.
+- **LangSmith:** [Get an API key](https://smith.langchain.com/) → `LANGSMITH_API_KEY`, then set `LANGSMITH_TRACING=true` to trace runs. Strictly optional — tracing is off by default.
 
 ---
 
 ## 📚 How it Works
 
-1. **Job Extraction:** The job posting is scraped once via the Bright Data MCP LinkedIn extractor and parsed into structured `JobDetails`, which are injected into every downstream task.
-2. **GitHub Analysis & Resume Parsing (in parallel):** The GitHub Project Summarizer chunks and indexes your public repos into Weaviate with Voyage embeddings, then retrieves and reranks the projects most relevant to the job. Meanwhile the Resume Analyzer extracts your resume into validated structured JSON.
-3. **Profile Compilation:** The Profiler agent creates a comprehensive profile using the parsed resume, GitHub summaries, and job requirements.
+1. **Job Extraction:** The job posting is scraped once via the Bright Data MCP LinkedIn extractor (or taken from the description you pasted) and parsed into structured `JobDetails`, which are injected into every agent's task prompt.
+2. **GitHub Analysis & Resume Parsing (parallel graph nodes):**
+   - **2a. `github_summary`:** The GitHub Project Summarizer chunks and indexes your public repos into Weaviate with Voyage embeddings, then retrieves and reranks the projects most relevant to the job, answering with a structured summary.
+   - **2b. `resume_analysis`:** The Resume Analyzer extracts your resume into validated structured JSON. Guardrail middleware checks the save, the URLs and — with a Claude judge — faithfulness to your resume, sending feedback back to the agent for up to 3 retries.
+3. **Profile Compilation:** Once both branches finish, the Profiler agent creates a comprehensive profile using the parsed resume, GitHub summaries, and job requirements.
 4. **Resume Tailoring:** The Resume Strategist aligns your resume with the job description, then renders it as a polished Word (.docx) resume via the live document-generation microservice (`generate_resume_docx` tool, max 3 attempts) — the .docx is converted to PDF with LibreOffice for the in-browser preview, and the Markdown version remains the fallback when the service or conversion is unavailable. The microservice is a separate FastAPI app deployed on AWS ECS Fargate; its source is at **[arijitde92/resume_docx_generator](https://github.com/arijitde92/resume_docx_generator)**.
 5. **Interview Prep:** The Interview Preparer researches the company's interview process and role-specific questions with the `web_search` tool, then generates custom interview questions and talking points grounded in your tailored resume — citing sources for anything it found on the web.
 
@@ -432,7 +459,8 @@ All keys go in `backend/.env`.
 
 ## 🛠️ Extending the System
 
-- Add new agents or tools by following the Crew AI documentation.
+- **New agent:** add an `AgentSpec` and a builder in `backend/app/services/pipeline/agents.py`, its task prompt in `prompts.py`, and a node + edges in `graph.py` (see the [LangGraph docs](https://langchain-ai.github.io/langgraph/)).
+- **New tool:** write a function with LangChain's `@tool` decorator in `backend/app/services/pipeline/tools/` — use a `make_*` factory when it needs per-run identity (see the [LangChain tools docs](https://python.langchain.com/docs/concepts/tools/)).
 - Integrate additional data sources or cloud services as needed.
 
 ---
@@ -445,9 +473,10 @@ MIT License
 
 ## 🤝 Acknowledgements
 
-- [Crew AI](https://www.crewai.com/)
+- [LangChain](https://python.langchain.com/)
+- [LangGraph](https://langchain-ai.github.io/langgraph/)
+- [LangSmith](https://smith.langchain.com/)
 - [resume_docx_generator](https://github.com/arijitde92/resume_docx_generator) — the companion .docx rendering microservice
 - [Weaviate](https://weaviate.io/)
 - [Voyage AI](https://www.voyageai.com/)
-- [LangChain](https://python.langchain.com/)
 - [BeautifulSoup](https://www.crummy.com/software/BeautifulSoup/)

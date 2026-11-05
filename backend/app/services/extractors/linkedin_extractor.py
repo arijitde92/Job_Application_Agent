@@ -1,10 +1,25 @@
+"""
+app.services.extractors.linkedin_extractor
+------------------------------------------
+LinkedIn job-posting extraction via the Bright Data MCP server.
+
+The page is scraped once with Bright Data's ``scrape_as_markdown`` MCP tool —
+called through ``langchain-mcp-adapters``, which exposes MCP tools as
+LangChain tools — and the markdown is parsed into a structured
+:class:`JobDetails`. The pipeline injects those details into every agent's
+task prompt, so no agent has to scrape the page again.
+"""
+
+import asyncio
+import json
 import os
 import re
-import json
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Optional
+
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from crewai_tools import MCPServerAdapter
+
 from app.core.logging import get_logger
 
 load_dotenv()
@@ -43,7 +58,7 @@ class JobDetails(BaseModel):
     )
 
     def to_agent_string(self) -> str:
-        """Return a clean JSON string suitable for passing to a CrewAI agent."""
+        """Return a clean JSON string suitable for an agent's prompt."""
         return self.model_dump_json(indent=2, exclude={"raw_markdown"})
 
     def to_dict(self) -> dict:
@@ -55,8 +70,11 @@ class JobDetails(BaseModel):
 # Bright Data MCP server connection helper
 # ---------------------------------------------------------------------------
 
+_MCP_SERVER_NAME = "brightdata"
+
+
 def _get_mcp_server_params() -> dict:
-    """Return the Bright Data MCP SSE server parameters."""
+    """Return the Bright Data MCP SSE connection config for ``MultiServerMCPClient``."""
     api_token = os.getenv("BRIGHT_DATA_API_KEY")
     if not api_token:
         raise EnvironmentError(
@@ -66,6 +84,88 @@ def _get_mcp_server_params() -> dict:
         "url": f"https://mcp.brightdata.com/sse?token={api_token}",
         "transport": "sse",
     }
+
+
+_UNTRUSTED_MARKER_RE = re.compile(r"=+\s*UNTRUSTED_[0-9a-f]+_(?:START|END)\s*=+")
+
+
+def _normalise_scrape_text(text: str) -> str:
+    """
+    Undo the wrapping Bright Data sometimes puts around scraped markdown.
+
+    The MCP server can return the page inside ``=====UNTRUSTED_<id>_START=====``
+    / ``_END=====`` guard markers, and/or as a JSON-escaped string whose
+    newlines are literal ``\\n``. Left as is, the line-based parser sees one
+    giant line and the markers end up as field values.
+    """
+    text = _UNTRUSTED_MARKER_RE.sub("\n", text).strip()
+
+    # JSON-encoded payload: {"...": "<markdown>"} or a bare JSON string.
+    if text[:1] in ('{', '"'):
+        try:
+            decoded = json.loads(text)
+        except ValueError:
+            decoded = None
+        if isinstance(decoded, str):
+            text = decoded
+        elif isinstance(decoded, dict):
+            strings = [v for v in decoded.values() if isinstance(v, str)]
+            if strings:
+                text = max(strings, key=len)
+
+    # Escaped newlines in text that has (almost) no real ones.
+    if text.count("\n") < 5 and text.count("\\n") > 5:
+        text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace('\\"', '"')
+    return text
+
+
+def _tool_result_text(result: Any) -> str:
+    """Flatten an MCP tool result (a string or LangChain content blocks) to text."""
+    if isinstance(result, str):
+        return _normalise_scrape_text(result)
+    if isinstance(result, list):
+        parts = []
+        for block in result:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return _normalise_scrape_text("\n".join(parts))
+    return _normalise_scrape_text(str(result))
+
+
+async def _scrape_as_markdown(url: str) -> str:
+    """Scrape ``url`` with Bright Data's ``scrape_as_markdown`` MCP tool."""
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langchain_mcp_adapters.tools import load_mcp_tools
+
+    client = MultiServerMCPClient({_MCP_SERVER_NAME: _get_mcp_server_params()})
+    # One session for both the tool listing and the call — one SSE connection.
+    async with client.session(_MCP_SERVER_NAME) as session:
+        # handle_tool_errors=False: a failed scrape must raise, not come back
+        # as an error string that would be parsed as page markdown.
+        tools = await load_mcp_tools(session, handle_tool_errors=False)
+        tool_names = [t.name for t in tools]
+        logger.info(
+            "linkedin_extractor: Connected to Bright Data MCP. Available tools: %s",
+            tool_names,
+        )
+        scrape_tool = next((t for t in tools if t.name == "scrape_as_markdown"), None)
+        if scrape_tool is None:
+            raise RuntimeError(f"'scrape_as_markdown' not found in MCP tools: {tool_names}")
+        logger.info("linkedin_extractor: Calling scrape_as_markdown for: %s", url)
+        return _tool_result_text(await scrape_tool.ainvoke({"url": url}))
+
+
+def _run_coroutine(coro) -> Any:
+    """Run ``coro`` to completion from sync code, even inside a running event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Called from a thread that already runs a loop: use a fresh thread.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 # ---------------------------------------------------------------------------
@@ -83,37 +183,19 @@ def extract_linkedin_job_details(url: str, json_output: bool = False):
                             ``JobDetails`` Pydantic model instance.
 
     Returns:
-        JobDetails | str: Extracted job details.
+        JobDetails | str: Extracted job details. On a scraping failure the
+            model carries ``job_name="ERROR: <reason>"``.
     """
     logger.info(
         "linkedin_extractor: Scraping LinkedIn job URL via Bright Data MCP: %s", url
     )
 
-    server_params = _get_mcp_server_params()
-    markdown_content = ""
-
     try:
-        with MCPServerAdapter(server_params) as mcp_tools:
-            tool_names = [t.name for t in mcp_tools]
-            logger.info(
-                "linkedin_extractor: Connected to Bright Data MCP. Available tools: %s",
-                tool_names,
-            )
-
-            if "scrape_as_markdown" not in tool_names:
-                raise RuntimeError(
-                    f"'scrape_as_markdown' not found in MCP tools: {tool_names}"
-                )
-
-            scrape_tool = next(t for t in mcp_tools if t.name == "scrape_as_markdown")
-            logger.info("linkedin_extractor: Calling scrape_as_markdown for: %s", url)
-            result = scrape_tool._run(url=url)
-            markdown_content = str(result)
-            logger.info(
-                "linkedin_extractor: Scraping complete. Content length: %d chars",
-                len(markdown_content),
-            )
-
+        markdown_content = _run_coroutine(_scrape_as_markdown(url))
+        logger.info(
+            "linkedin_extractor: Scraping complete. Content length: %d chars",
+            len(markdown_content),
+        )
     except Exception as exc:
         logger.error(
             "linkedin_extractor: Failed to scrape %s — %s", url, exc, exc_info=True
@@ -215,6 +297,27 @@ def _parse_markdown_to_job_details(markdown: str, url: str) -> JobDetails:
             job_name = m.group(2).strip()
             break
 
+    # Fallbacks when the <title> line is absent from the scrape:
+    #   "Join to apply for the **AI Developer** role at **Acme**"
+    #   "Join or sign in ... apply for the AI Developer role at Acme"
+    #   a top-level "# AI Developer" / "## AI Developer" heading
+    if job_name == "N/A":
+        apply_re = re.compile(
+            r"apply for the\s+\**\s*(.+?)\s*\**\s+role at\b", re.IGNORECASE
+        )
+        for line in lines[:200]:
+            m = apply_re.search(line)
+            if m:
+                job_name = m.group(1).strip()
+                break
+    if job_name == "N/A":
+        skip = ("join", "sign in", "apply", "linkedin", "skip to", "similar", "about")
+        for line in lines[:80]:
+            m = re.match(r"^#{1,2}\s+(.+)$", line.strip())
+            if m and not any(s in m.group(1).lower() for s in skip):
+                job_name = clean(m.group(1)).strip("*_ ")
+                break
+
     # ------------------------------------------------------------------
     # 2. Company name — confirmed from LinkedIn company URL in topcard
     #    Pattern: [Company](https://XX.linkedin.com/company/slug ...) <Location>
@@ -300,16 +403,21 @@ def _parse_markdown_to_job_details(markdown: str, url: str) -> JobDetails:
     ]
     requirements = section_between(req_start_kws, req_end_kws)
 
+    def clip(value: str, limit: int) -> str:
+        """Keep short metadata fields within their DB column width."""
+        value = " ".join(value.split())
+        return value if len(value) <= limit else value[: limit - 1] + "…"
+
     return JobDetails(
         url=url,
-        job_name=job_name,
-        company_name=company_name,
-        location=location,
+        job_name=clip(job_name, 255),
+        company_name=clip(company_name, 255),
+        location=clip(location, 255),
         workplace_type=workplace_type,
-        seniority_level=seniority,
-        employment_type=employment_type,
-        job_function=job_function,
-        industry=industry,
+        seniority_level=clip(seniority, 100),
+        employment_type=clip(employment_type, 100),
+        job_function=clip(job_function, 255),
+        industry=clip(industry, 255),
         about_company=about_company,
         job_description=job_description,
         requirements=requirements,

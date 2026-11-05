@@ -46,8 +46,8 @@ AsyncSessionLocal = async_sessionmaker(
 
 # ── Sync engine (lazy) ────────────────────────────────────────────────────────
 # The async engine's pooled connections are bound to the main event loop, so
-# synchronous code running in worker threads (e.g. CrewAI tools inside the
-# crew_runner's ThreadPoolExecutor) must not use it. They get a small pymysql
+# synchronous code running in worker threads (e.g. LangChain tools inside the
+# pipeline_runner's ThreadPoolExecutor) must not use it. They get a small pymysql
 # engine instead, created on first use.
 _sync_engine: Engine | None = None
 

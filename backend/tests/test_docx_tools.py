@@ -3,8 +3,9 @@ Tests for the ``generate_resume_docx`` tool factory.
 
 The tool is what the resume_strategist agent calls to render the tailored
 resume as a .docx via the external document service, so these tests exercise
-it the way the agent does — through ``.run()`` — with the HTTP call
-monkeypatched out. They pin down the parts the agent cannot see: the
+it the way the agent does — as a LangChain tool, through ``.invoke({...})``,
+with the HTTP call monkeypatched out. They pin down the parts the agent
+cannot see: the
 deterministic metadata envelope, the 3-attempt cap, the docx magic-byte check,
 and that every failure comes back as an "ERROR: ..." string instead of an
 exception.
@@ -15,8 +16,8 @@ import json
 import pytest
 import requests
 
-import app.services.crew.docx_tools as docx_tools
-from app.services.crew.docx_tools import (
+import app.services.pipeline.tools.docx_tools as docx_tools
+from app.services.pipeline.tools.docx_tools import (
     ResumeDocxContext,
     _coerce_resume_object,
     build_docx_filename,
@@ -81,7 +82,7 @@ def test_success_writes_docx_sets_state_and_instructs_markdown(tmp_path, posted)
     ctx = make_ctx(tmp_path)
     tool = make_generate_resume_docx_tool(ctx)
 
-    result = tool.run(resume_json=json.dumps(SAMPLE_RESUME))
+    result = tool.invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
 
     assert result.startswith("SUCCESS:")
     assert "Markdown" in result  # the agent must still emit the md final answer
@@ -93,7 +94,7 @@ def test_success_writes_docx_sets_state_and_instructs_markdown(tmp_path, posted)
 
 def test_metadata_envelope_is_deterministic(tmp_path, posted):
     ctx = make_ctx(tmp_path)
-    make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(SAMPLE_RESUME))
+    make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
 
     assert len(posted) == 1
     payload = posted[0]["json"]
@@ -117,7 +118,7 @@ def test_section_order_includes_all_present_sections(tmp_path, posted):
         certifications=[{"name": "Cert", "issuer": "Org"}],
     )
     ctx = make_ctx(tmp_path)
-    make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(resume))
+    make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(resume)})
 
     assert posted[0]["json"]["metadata"]["section_order"] == [
         "summary", "experience", "education", "skills",
@@ -128,7 +129,7 @@ def test_section_order_includes_all_present_sections(tmp_path, posted):
 def test_fenced_json_string_is_accepted(tmp_path, posted):
     fenced = "```json\n" + json.dumps(SAMPLE_RESUME) + "\n```"
     ctx = make_ctx(tmp_path)
-    result = make_generate_resume_docx_tool(ctx).run(resume_json=fenced)
+    result = make_generate_resume_docx_tool(ctx).invoke({"resume_json": fenced})
     assert result.startswith("SUCCESS:")
 
 
@@ -151,7 +152,7 @@ def test_coerce_rejects_non_objects(bad):
 def test_missing_personal_information_errors_without_post(tmp_path, posted):
     resume = {k: v for k, v in SAMPLE_RESUME.items() if k != "personal_information"}
     ctx = make_ctx(tmp_path)
-    result = make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(resume))
+    result = make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(resume)})
 
     assert result.startswith("ERROR:")
     assert "personal_information" in result
@@ -162,7 +163,7 @@ def test_missing_personal_information_errors_without_post(tmp_path, posted):
 def test_no_content_sections_errors_without_post(tmp_path, posted):
     resume = {"personal_information": {"name": "Ada Lovelace"}}
     ctx = make_ctx(tmp_path)
-    result = make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(resume))
+    result = make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(resume)})
 
     assert result.startswith("ERROR:")
     assert posted == []
@@ -176,7 +177,7 @@ def test_non_200_response_reports_status_and_body(tmp_path, monkeypatch):
         lambda *a, **k: FakeResponse(422, b"", '{"detail": "bad section"}'),
     )
     ctx = make_ctx(tmp_path)
-    result = make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(SAMPLE_RESUME))
+    result = make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
 
     assert result.startswith("ERROR:")
     assert "422" in result
@@ -189,7 +190,7 @@ def test_non_docx_body_is_rejected(tmp_path, monkeypatch):
         lambda *a, **k: FakeResponse(200, b"<html>error page</html>"),
     )
     ctx = make_ctx(tmp_path)
-    result = make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(SAMPLE_RESUME))
+    result = make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
 
     assert result.startswith("ERROR:")
     assert ".docx" in result
@@ -202,7 +203,7 @@ def test_connection_error_is_retryable(tmp_path, monkeypatch):
 
     monkeypatch.setattr(docx_tools.requests, "post", raise_conn_error)
     ctx = make_ctx(tmp_path)
-    result = make_generate_resume_docx_tool(ctx).run(resume_json=json.dumps(SAMPLE_RESUME))
+    result = make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
 
     assert result.startswith("ERROR:")
     assert "again" in result
@@ -222,11 +223,11 @@ def test_attempt_cap_stops_after_three_calls(tmp_path, monkeypatch):
     tool = make_generate_resume_docx_tool(ctx)
 
     for _ in range(3):
-        result = tool.run(resume_json=json.dumps(SAMPLE_RESUME))
+        result = tool.invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
         assert result.startswith("ERROR:")
 
     # Fourth call: terminal error, no further POST, agent told to fall back.
-    result = tool.run(resume_json=json.dumps(SAMPLE_RESUME))
+    result = tool.invoke({"resume_json": json.dumps(SAMPLE_RESUME)})
     assert result.startswith("ERROR:")
     assert "Do NOT call generate_resume_docx again" in result
     assert "Markdown" in result
