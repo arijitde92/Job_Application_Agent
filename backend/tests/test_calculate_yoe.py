@@ -3,9 +3,11 @@ Tests for the ``calculate_yoe`` resume tool.
 
 The tool is what the resume_analyzer agent calls to turn a list of
 (start_date, end_date) position pairs into the ``years_of_experience`` value,
-so these tests exercise it the way the agent does — through ``.run()``, which
-also runs CrewAI's argument validation — and check that every failure raises an
-exception carrying an actionable message the agent can retry from.
+so these tests exercise it the way the agent does — as a LangChain tool,
+through ``.invoke({...})``, which also runs the tool's pydantic argument
+validation — and check that every failure raises an exception carrying an
+actionable message. In the agent loop ``ToolErrorMiddleware`` turns that
+exception into an error observation the model can retry from.
 
 Expected values follow the tool's documented arithmetic: the day spans of all
 pairs are summed, the total is split into whole years (365 days) and whole
@@ -17,8 +19,9 @@ the result is ``years + months / 12`` rounded to one decimal place.
 from datetime import date, timedelta
 
 import pytest
+from pydantic import ValidationError
 
-from app.services.crew.resume_tools import (
+from app.services.pipeline.tools.resume_tools import (
     _calculate_yoe,
     _count_shared_months,
     calculate_yoe,
@@ -78,13 +81,13 @@ VALID_SAMPLES = [
 
 @pytest.mark.parametrize("date_ranges, expected", VALID_SAMPLES)
 def test_calculate_yoe_valid_samples(date_ranges, expected):
-    result = calculate_yoe.run(date_ranges=date_ranges)
+    result = calculate_yoe.invoke({"date_ranges": date_ranges})
     assert isinstance(result, float)
     assert result == expected
 
 
 def test_no_positions_returns_zero():
-    assert calculate_yoe.run(date_ranges=[]) == 0.0
+    assert calculate_yoe.invoke({"date_ranges": []}) == 0.0
 
 
 def test_null_end_date_uses_today():
@@ -96,7 +99,7 @@ def test_null_end_date_uses_today():
 @pytest.mark.parametrize("end_date", ["", "  ", "Present", "current", "NULL", "N/A"])
 def test_present_style_end_dates_are_treated_as_current(end_date):
     """LLMs often write "Present" instead of null for the current position."""
-    assert calculate_yoe.run(date_ranges=[(_days_ago(730), end_date)]) == 2.0
+    assert calculate_yoe.invoke({"date_ranges": [(_days_ago(730), end_date)]}) == 2.0
 
 
 def test_accepts_json_string_argument():
@@ -116,8 +119,8 @@ def test_shared_month_is_discounted_once():
     shares_june_2020 = [("2018-06-01", "2020-06-01"), ("2020-06-15", "2022-01-15")]
     shares_nothing = [("2018-06-01", "2020-05-30"), ("2020-06-15", "2022-01-15")]
 
-    assert calculate_yoe.run(date_ranges=shares_june_2020) == 3.5
-    assert calculate_yoe.run(date_ranges=shares_nothing) == 3.6
+    assert calculate_yoe.invoke({"date_ranges": shares_june_2020}) == 3.5
+    assert calculate_yoe.invoke({"date_ranges": shares_nothing}) == 3.6
 
 
 def test_back_to_back_positions_share_the_handover_month():
@@ -127,8 +130,8 @@ def test_back_to_back_positions_share_the_handover_month():
     months -> 21/12 = 1.75 -> 1.8. (One decimal place absorbs this particular
     discount; test_shared_month_is_discounted_once pins a visible one.)
     """
-    assert calculate_yoe.run(
-        date_ranges=[("2019-01-01", "2020-01-01"), ("2020-01-01", "2020-11-30")]
+    assert calculate_yoe.invoke({
+        "date_ranges": [("2019-01-01", "2020-01-01"), ("2020-01-01", "2020-11-30")]}
     ) == 1.8
 
 
@@ -141,7 +144,7 @@ def test_shared_month_counted_for_each_occurrence():
     ]
     # 517 + 579 + 365 = 1461 days = 4 years + 1 day -> 48 months, minus the two
     # shared months (June 2020, January 2022) -> 46/12 = 3.833 -> 3.8.
-    assert calculate_yoe.run(date_ranges=chained) == 3.8
+    assert calculate_yoe.invoke({"date_ranges": chained}) == 3.8
 
 
 def test_shared_month_detected_when_positions_are_newest_first():
@@ -151,7 +154,7 @@ def test_shared_month_detected_when_positions_are_newest_first():
         ("2020-06-01", "2022-01-01"),
         ("2022-01-01", "2023-01-01"),
     ]
-    assert calculate_yoe.run(date_ranges=list(reversed(oldest_first))) == 3.8
+    assert calculate_yoe.invoke({"date_ranges": list(reversed(oldest_first))}) == 3.8
 
 
 @pytest.mark.parametrize(
@@ -183,42 +186,42 @@ def test_count_shared_months(spans, expected_shared):
 )
 def test_invalid_date_format_raises(bad_date):
     with pytest.raises(ValueError, match="is not a valid date"):
-        calculate_yoe.run(date_ranges=[(bad_date, "2021-01-01")])
+        calculate_yoe.invoke({"date_ranges": [(bad_date, "2021-01-01")]})
 
 
 def test_future_date_raises():
     future = (date.today() + timedelta(days=30)).isoformat()
     with pytest.raises(ValueError, match="is in the future"):
-        calculate_yoe.run(date_ranges=[("2020-01-01", future)])
+        calculate_yoe.invoke({"date_ranges": [("2020-01-01", future)]})
     with pytest.raises(ValueError, match="is in the future"):
-        calculate_yoe.run(date_ranges=[(future, None)])
+        calculate_yoe.invoke({"date_ranges": [(future, None)]})
 
 
 @pytest.mark.parametrize("implausible", ["0219-01-01", "1899-12-31", "0001"])
 def test_implausibly_old_date_raises(implausible):
     """Parses as a date, but cannot be an employment date — a misread year."""
     with pytest.raises(ValueError, match="cannot be a real employment date"):
-        calculate_yoe.run(date_ranges=[(implausible, "2020-01-01")])
+        calculate_yoe.invoke({"date_ranges": [(implausible, "2020-01-01")]})
 
 
 def test_invalid_datatype_inside_pair_raises():
     with pytest.raises(TypeError, match="must be a date string in YYYY-MM-DD format"):
-        calculate_yoe.run(date_ranges=[(20200101, "2021-01-01")])
+        calculate_yoe.invoke({"date_ranges": [(20200101, "2021-01-01")]})
 
 
 def test_invalid_datatype_for_date_ranges_raises():
-    # Through .func(), which skips CrewAI's schema validation, so the tool's own
-    # message is what the agent would see.
+    # Through .func(), which skips LangChain's schema validation, so the tool's
+    # own message is what the agent would see.
     with pytest.raises(TypeError, match="date_ranges must be a list"):
         calculate_yoe.func(42)
-    # Through .run(), CrewAI's own argument validation rejects it first.
-    with pytest.raises(ValueError):
-        calculate_yoe.run(date_ranges=42)
+    # Through .invoke(), the tool's pydantic argument validation rejects it first.
+    with pytest.raises(ValidationError):
+        calculate_yoe.invoke({"date_ranges": 42})
 
 
 def test_entry_that_is_not_a_pair_raises():
     with pytest.raises(TypeError, match="Entry 1 of date_ranges must be a"):
-        calculate_yoe.run(date_ranges=["2020-01-01"])
+        calculate_yoe.invoke({"date_ranges": ["2020-01-01"]})
 
 
 @pytest.mark.parametrize(
@@ -231,30 +234,30 @@ def test_entry_that_is_not_a_pair_raises():
 )
 def test_malformed_tuple_raises(malformed):
     with pytest.raises(ValueError, match="must have EXACTLY 2"):
-        calculate_yoe.run(date_ranges=malformed)
+        calculate_yoe.invoke({"date_ranges": malformed})
 
 
 def test_multiple_null_end_dates_raise():
     with pytest.raises(ValueError, match="only ONE"):
-        calculate_yoe.run(
-            date_ranges=[("2019-01-01", None), ("2021-01-01", None)]
+        calculate_yoe.invoke({
+            "date_ranges": [("2019-01-01", None), ("2021-01-01", None)]}
         )
 
 
 @pytest.mark.parametrize("missing_start", [None, "", "   "])
 def test_none_start_date_raises(missing_start):
     with pytest.raises(ValueError, match="start_date of entry 1 is missing"):
-        calculate_yoe.run(date_ranges=[(missing_start, "2021-01-01")])
+        calculate_yoe.invoke({"date_ranges": [(missing_start, "2021-01-01")]})
 
 
 def test_end_date_before_start_date_raises():
     with pytest.raises(ValueError, match="ends before it starts"):
-        calculate_yoe.run(date_ranges=[("2021-01-01", "2020-01-01")])
+        calculate_yoe.invoke({"date_ranges": [("2021-01-01", "2020-01-01")]})
 
 
 def test_error_message_identifies_the_offending_entry():
     """The agent needs to know WHICH pair to fix, not just that one is wrong."""
     with pytest.raises(ValueError, match="entry 2"):
-        calculate_yoe.run(
-            date_ranges=[("2019-01-01", "2020-01-01"), ("01/15/2021", None)]
+        calculate_yoe.invoke({
+            "date_ranges": [("2019-01-01", "2020-01-01"), ("01/15/2021", None)]}
         )

@@ -201,9 +201,9 @@ def run_eval(version: str, limit: int | None, answers_from: Path | None) -> int:
 def _agent_model() -> str:
     """The model the agent under test runs on (recorded for reproducibility)."""
     try:
-        from app.services.crew.agents import resume_analyzer
+        from app.services.pipeline.llms import CLAUDE_MODEL
 
-        return str(resume_analyzer.llm.model)
+        return CLAUDE_MODEL
     except Exception:  # noqa: BLE001 — recording metadata must never fail the run
         return "unknown"
 

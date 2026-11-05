@@ -1,10 +1,13 @@
 """
 Standalone quality-check script for the resume_analyzer agent.
 
-Runs the resume analysis agent + task in isolation (no GitHub task, no
-profiler, no GCS upload, no database write): the parsed-resume JSON is
-written to local temp storage by the save_parsed_resume tool and then copied
-to tests/output/test_parsed_resume_<stem>_<timestamp>.json for inspection.
+Runs the resume analysis agent in isolation via
+``app.services.pipeline.analyze_resume`` — the same LangChain agent, prompt
+and guardrail middleware (including the faithfulness judge) as the pipeline's
+``resume_analysis`` node, but no GitHub node, no profiler, no GCS upload and
+no database write: the parsed-resume JSON is written to local temp storage by
+the save_parsed_resume tool and then copied to
+tests/output/test_parsed_resume_<stem>_<timestamp>.json for inspection.
 
 By default it runs against all three sample resumes; pass --resume to run a
 single custom file instead.
@@ -15,7 +18,8 @@ Not a pytest module — run it directly:
     uv run python tests/run_resume_analyzer_test.py
     uv run python tests/run_resume_analyzer_test.py --resume "sample_data/Arijit De Resume 2026.docx"
 
-Requires GEMINI_API_KEY (loaded from backend/.env).
+Requires ANTHROPIC_API_KEY (loaded from backend/.env) — the agent and its
+judge run on Claude.
 """
 
 import argparse
@@ -50,11 +54,8 @@ def _sanitize_stem(name: str) -> str:
 def analyze_resume(resume_file: Path) -> bool:
     """Run the resume_analyzer on one file. Returns True on success."""
     # Imports that need sys.path/.env ready.
-    from crewai import Crew
-
-    from app.services.crew.agents import resume_analyzer
-    from app.services.crew.resume_tools import ResumeAnalysisContext
-    from app.services.crew.tasks import _resume_analysis_task
+    from app.services.pipeline import ResumeAnalysisError, analyze_resume, build_run_config
+    from app.services.pipeline.tools import ResumeAnalysisContext
     from app.services.resume_parser import (
         ParsedResume,
         ResumeParsingError,
@@ -77,15 +78,20 @@ def analyze_resume(resume_file: Path) -> bool:
         f.write(resume_text)
 
     try:
-        # 2. Run the agent + task in isolation. local_only=True → the save
-        #    tool writes to temp storage only (no GCS upload, no DB write).
+        # 2. Run the agent in isolation. local_only=True → the save tool
+        #    writes to temp storage only (no GCS upload, no DB write).
         ctx = ResumeAnalysisContext(
             user_id=0, resume_id=0, user_name="test_user", local_only=True,
             resume_text=resume_text,
         )
-        task = _resume_analysis_task(ctx, run_async=False)
-        crew = Crew(agents=[resume_analyzer], tasks=[task], verbose=True)
-        crew.kickoff(inputs={"resume_path": tmp_md.name})
+        try:
+            analyze_resume(
+                ctx, tmp_md.name,
+                config=build_run_config(include_github=False, extra_tags=["isolation-test"]),
+            )
+        except ResumeAnalysisError as e:
+            print(f"FAILED: the guardrail rejected the extraction: {e}")
+            return False
 
         if not ctx.state.get("saved"):
             print("FAILED: the agent never saved the parsed resume.")
@@ -133,8 +139,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("ERROR: GEMINI_API_KEY is not set (expected in backend/.env).")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ERROR: ANTHROPIC_API_KEY is not set (expected in backend/.env).")
         return 1
 
     # Resolve the list of resumes to process.

@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.api.deps import get_current_user, get_db
 from app.main import app
 from app.schemas import TailorJobRequest
-from app.services import crew_runner
+from app.services import pipeline_runner
 from app.services.extractors import text_job_extractor
 from app.services.extractors.text_job_extractor import (
     JobDescriptionParsingError,
@@ -295,7 +295,7 @@ def test_details_from_real_job_board_posting_keeps_text_verbatim(monkeypatch):
     details = extract_job_details_from_text(HYLAND_JD_TEXT)
 
     # The whole posting — noise lines and double spaces included — reaches the
-    # crew unchanged; only the metadata comes from the LLM.
+    # pipeline unchanged; only the metadata comes from the LLM.
     assert details.job_description == HYLAND_JD_TEXT.strip()
     assert details.job_name == "Senior Software Engineer (AI Enablement)"
     assert details.company_name == "Hyland"
@@ -397,11 +397,11 @@ def test_tailor_endpoint_rejects_both_job_sources(client):
     assert "not both" in json.dumps(resp.json())
 
 
-# ── crew_runner: job source routing ──────────────────────────────────────────
+# ── pipeline_runner: job source routing ──────────────────────────────────────
 
 def _stop_after_job_extraction(monkeypatch, calls):
     """Record which extractor runs; an unsupported resume type then aborts the
-    run at the resume-parsing step, before any crew is built."""
+    run at the resume-parsing step, before any graph is built."""
     from app.services.extractors import linkedin_extractor
     from app.services.extractors.linkedin_extractor import JobDetails
 
@@ -415,11 +415,11 @@ def _stop_after_job_extraction(monkeypatch, calls):
     )
 
 
-def test_crew_runner_uses_text_extractor_for_job_description(monkeypatch):
+def test_pipeline_runner_uses_text_extractor_for_job_description(monkeypatch):
     calls = []
     _stop_after_job_extraction(monkeypatch, calls)
     with pytest.raises(RuntimeError, match="Resume parsing failed"):
-        crew_runner._run_crew_sync(
+        pipeline_runner._run_pipeline_sync(
             job_id=1, user_id=1, user_email="a@example.com",
             resume_bytes=b"x", resume_filename="resume.unsupported",
             job_description_text=JD_TEXT,
@@ -427,12 +427,12 @@ def test_crew_runner_uses_text_extractor_for_job_description(monkeypatch):
     assert calls == [("text", JD_TEXT)]
 
 
-def test_crew_runner_uses_linkedin_extractor_for_url(monkeypatch):
+def test_pipeline_runner_uses_linkedin_extractor_for_url(monkeypatch):
     calls = []
     _stop_after_job_extraction(monkeypatch, calls)
     url = "https://www.linkedin.com/jobs/view/1/"
     with pytest.raises(RuntimeError, match="Resume parsing failed"):
-        crew_runner._run_crew_sync(
+        pipeline_runner._run_pipeline_sync(
             job_id=1, user_id=1, user_email="a@example.com",
             resume_bytes=b"x", resume_filename="resume.unsupported", job_url=url,
         )

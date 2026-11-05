@@ -372,10 +372,11 @@ def compute_years_of_experience(result: "ParsedResumeResult") -> int:
 
 
 # JSON template embedded verbatim in the resume-analysis task description.
-# Safe for CrewAI description interpolation: interpolation only replaces bare
+# Safe for the pipeline's prompt interpolation
+# (app.services.pipeline.prompts.interpolate): it only replaces bare
 # {identifier} tokens, and every brace here is followed by a quoted key or
-# whitespace. Never add a bare {word} token to this literal — CrewAI would
-# raise a KeyError for a missing crew input.
+# whitespace. Never add a bare {word} token to this literal — it would be
+# mistaken for a pipeline input.
 PARSED_RESUME_SCHEMA: str = """{
   "id": <resume_id>,
   "result": {

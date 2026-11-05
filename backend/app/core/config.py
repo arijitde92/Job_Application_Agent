@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     BRIGHT_DATA_API_KEY: str = Field(default="", description="Bright Data MCP API key")
     GITHUB_PERSONAL_ACCESS_TOKEN: str = Field(default="", description="GitHub PAT")
     GEMINI_API_KEY: str = Field(default="", description="Google Gemini API key")
+    ANTHROPIC_API_KEY: str = Field(default="", description="Anthropic API key (Claude)")
     SERPER_API_KEY: str = Field(default="", description="Serper search API key")
     ZAI_API_KEY: str = Field(default="", description="Z.ai API key (GLM models)")
     ZAI_BASE_URL: str = Field(
@@ -87,9 +88,13 @@ class Settings(BaseSettings):
         description="Read timeout (seconds) for the resume .docx generation service",
     )
 
-    # ── Crew AI ───────────────────────────────────────────────────────────
-    CREWAI_TOOLS_ALLOW_UNSAFE_PATHS: bool = Field(default=True, description="Allow CrewAI tools to access unsafe paths")
-    CREWAI_TRACING_ENABLED: bool = Field(default=True, description="Enable CrewAI tracing")
+    # ── LangSmith tracing ─────────────────────────────────────────────────
+    # Traces contain resume text and other personal data — enable only for a
+    # LangSmith workspace allowed to store applicant data.
+    LANGSMITH_TRACING: bool = Field(default=False, description="Send LangChain/LangGraph traces to LangSmith")
+    LANGSMITH_API_KEY: str = Field(default="", description="LangSmith API key")
+    LANGSMITH_PROJECT: str = Field(default="job-application-agent", description="LangSmith project name")
+    LANGSMITH_ENDPOINT: str = Field(default="", description="LangSmith API endpoint override (EU / self-hosted); blank = default")
 
     # ── Resume Upload ─────────────────────────────────────────────────────
     MAX_RESUME_SIZE_MB: int = Field(default=10, description="Max resume upload size in MB")
@@ -136,6 +141,23 @@ class Settings(BaseSettings):
     }
 
 
+def export_langsmith_env(settings: Settings) -> None:
+    """
+    Export the LangSmith settings to ``os.environ``.
+
+    LangChain, LangGraph and the ``langsmith`` SDK read their tracing
+    configuration from environment variables only, so values coming from
+    ``backend/.env`` must be propagated. Blank optional values are left unset.
+    """
+    import os
+
+    os.environ["LANGSMITH_TRACING"] = str(settings.LANGSMITH_TRACING).lower()
+    for name in ("LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT"):
+        value = getattr(settings, name)
+        if value:
+            os.environ[name] = value
+
+
 @lru_cache()
 def get_settings() -> Settings:
     """Return a cached Settings instance (reads .env once)."""
@@ -143,7 +165,5 @@ def get_settings() -> Settings:
     import os
     if settings.GOOGLE_APPLICATION_CREDENTIALS:
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
-    # Propagate CrewAI variables to os.environ for libraries that read them directly
-    os.environ["CREWAI_TOOLS_ALLOW_UNSAFE_PATHS"] = str(settings.CREWAI_TOOLS_ALLOW_UNSAFE_PATHS).lower()
-    os.environ["CREWAI_TRACING_ENABLED"] = str(settings.CREWAI_TRACING_ENABLED).lower()
+    export_langsmith_env(settings)
     return settings

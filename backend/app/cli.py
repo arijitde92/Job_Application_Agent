@@ -10,7 +10,7 @@ Run from the ``backend/`` directory:
     uv run frontend     # start the Vite dev server (npm)
     uv run dev          # run db-proxy + api + frontend together
     uv run db-proxy     # start the Cloud SQL Auth Proxy (127.0.0.1:3306)
-    uv run crew --url ...   # run the CrewAI pipeline CLI
+    uv run pipeline --url ...   # run the LangGraph pipeline CLI
 
 These are thin wrappers around uvicorn / npm / cloud-sql-proxy so the long
 invocations live in one place.
@@ -30,9 +30,9 @@ DEFAULT_API_HOST = os.environ.get("API_HOST", "127.0.0.1")
 DEFAULT_API_PORT = os.environ.get("API_PORT", "8000")
 
 
-def crew() -> None:
-    """Run the CrewAI pipeline CLI (delegates to app.services.crew.__main__)."""
-    from app.services.crew.__main__ import main
+def pipeline() -> None:
+    """Run the LangGraph pipeline CLI (delegates to app.services.pipeline.__main__)."""
+    from app.services.pipeline.__main__ import main
 
     main()
 
@@ -168,29 +168,44 @@ def _spawn(cmd: list[str], cwd: Path) -> subprocess.Popen:
     we can signal the whole group — npm spawns Vite, and uvicorn --reload spawns
     a worker, both of which would otherwise orphan and keep their ports bound.
     """
+    if os.name == "nt":
+        # Resolve e.g. "npm" -> "npm.cmd"; CreateProcess doesn't apply PATHEXT.
+        import shutil
+
+        resolved = shutil.which(cmd[0])
+        if resolved:
+            cmd = [resolved, *cmd[1:]]
+        return subprocess.Popen(cmd, cwd=cwd, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
     return subprocess.Popen(cmd, cwd=cwd, start_new_session=True)
 
 
-def _terminate(procs: list[subprocess.Popen]) -> None:
-    """Stop each process and its whole group; escalate to SIGKILL if needed."""
+def _kill_tree(p: subprocess.Popen, force: bool) -> None:
+    """Signal a process and all its descendants (platform-specific)."""
+    if os.name == "nt":
+        # taskkill /T walks the child tree (npm.cmd -> node -> vite, uvicorn workers).
+        # /F always: without it taskkill can't close console apps and just hangs 10s.
+        args = ["taskkill", "/F", "/T", "/PID", str(p.pid)]
+        subprocess.run(args,stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
     import signal as _signal
-    import time
 
+    sig = _signal.SIGKILL if force else _signal.SIGTERM
+    try:
+        os.killpg(os.getpgid(p.pid), sig)
+    except (ProcessLookupError, PermissionError):
+        p.kill() if force else p.terminate()
+
+
+def _terminate(procs: list[subprocess.Popen]) -> None:
+    """Stop each process and its whole group; escalate to a force kill if needed."""
     for p in procs:
-        if p.poll() is not None:
-            continue
-        try:
-            os.killpg(os.getpgid(p.pid), _signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            p.terminate()
+        if p.poll() is None:
+            _kill_tree(p, force=False)
     for p in procs:
         try:
             p.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(os.getpgid(p.pid), _signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                p.kill()
+            _kill_tree(p, force=True)
 
 
 def dev() -> None:

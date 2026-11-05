@@ -1,5 +1,14 @@
 # RAGAS Evaluation Pipeline for the `resume_analyzer` Agent
 
+> **Note (2026-11):** this is the original evaluation plan. The agent pipeline has
+> since moved from CrewAI to **LangChain agents orchestrated with LangGraph**
+> (`app/services/pipeline/`, driven by `app/services/pipeline_runner.py`) with
+> LangSmith tracing — see [backend/README.md](../README.md). References below to
+> CrewAI, `Crew(...)`, `_resume_analysis_task` and `app/services/crew/` describe
+> the pre-migration harness; it now calls `app.services.pipeline.analyze_resume`,
+> and the HallucinationGuardrail is a real Claude faithfulness judge
+> (`app/services/pipeline/guardrails.py`).
+
 ## Context
 
 The `resume_analyzer` CrewAI agent (`backend/app/services/crew/agents.py:187`) extracts a resume's raw text into a strict `ParsedResume` JSON document. Today the only quality check is a CrewAI `HallucinationGuardrail` (a no-op on open-source CrewAI) and an ad-hoc isolation script (`backend/tests/run_resume_analyzer_test.py`). There is **no objective, repeatable measure** of extraction quality.

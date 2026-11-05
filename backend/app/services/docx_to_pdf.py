@@ -6,13 +6,13 @@ Convert a .docx file to PDF with LibreOffice in headless mode.
 LibreOffice is a system dependency (``apt-get install libreoffice-writer``);
 when its binary is missing, or the conversion fails for any reason, the
 converter logs and returns ``None`` instead of raising — the caller
-(``app.services.crew_runner``) then simply ships the .docx without a PDF and
+(``app.services.pipeline_runner``) then simply ships the .docx without a PDF and
 the frontend falls back to the Markdown preview.
 
 Two LibreOffice quirks are handled here:
 
 * Concurrent invocations fight over the shared user profile and fail with a
-  lock error. The crew runner executes up to 4 jobs in parallel, so every
+  lock error. The pipeline runner executes up to 4 jobs in parallel, so every
   call gets its own throwaway profile via ``-env:UserInstallation=...``.
 * ``soffice`` can exit 0 without producing any output, so success is judged
   by the output PDF existing — never by the return code alone.

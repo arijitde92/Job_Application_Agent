@@ -215,7 +215,7 @@ def rerank(query: str, documents: Sequence[str], top_k: int) -> List[Tuple[int, 
 
     On any API failure this degrades to the input order (with ``0.0`` scores)
     rather than raising: a reranker outage should cost result quality, not the
-    whole crew run.
+    whole pipeline run.
     """
     if not documents:
         return []

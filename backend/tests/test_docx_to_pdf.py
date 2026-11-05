@@ -4,7 +4,7 @@ Tests for the LibreOffice-based docx → PDF converter.
 The conversion itself only runs where LibreOffice is installed (it is a
 documented system dependency, not a Python one) — the round-trip test skips
 cleanly elsewhere. The missing-binary behavior is tested everywhere, because
-returning ``None`` instead of raising is what lets a crew run ship the .docx
+returning ``None`` instead of raising is what lets a pipeline run ship the .docx
 without a PDF preview when LibreOffice is absent.
 """
 

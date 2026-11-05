@@ -1,33 +1,34 @@
 """
-app.services.crew.search_tools
-------------------------------
-Web-search tool for the interview_preparer agent, backed by the Serper API
-(https://serper.dev — a Google Search results API).
+app.services.pipeline.tools.search_tools
+----------------------------------------
+Web-search LangChain tool for the interview_preparer and resume_strategist
+agents, backed by the Serper API (https://serper.dev — a Google Search
+results API).
 
 Unlike the GitHub and resume tools in this package, ``web_search`` carries no
 per-run identity (there is nothing to scope it to), so it is a plain
 module-level tool rather than a factory — the same reasoning that makes
-``calculate_yoe`` a module-level tool in ``app.services.crew.resume_tools``.
+``calculate_yoe`` a module-level tool in
+``app.services.pipeline.tools.resume_tools``.
 
-The tool never raises. It runs in the LAST task of the crew, after the resume
+The tool never raises. It runs in the LAST node of the pipeline, after the resume
 has already been tailored, so a Serper outage, a missing key, or a rate limit
 must degrade the interview prep to "no web results" rather than sink a run
 whose expensive work is already done. Every failure comes back as an
-"ERROR: ..." string, which CrewAI feeds to the agent as an observation; the
+"ERROR: ..." string, which the agent receives as a tool observation; the
 task prompt tells the agent to continue from the resume and job details alone
 when that happens.
 
-crewai_tools ships its own ``SerperDevTool``, which this replaces for the
-interview_preparer. That tool returns the raw Serper JSON payload — knowledge
-graph, people-also-ask, related searches, sitelinks and all — which burns
-context on markup the agent does not need. This one returns a compact, ranked
-text digest of just the answer box and the organic results.
+Rather than returning the raw Serper JSON payload — knowledge graph,
+people-also-ask, related searches, sitelinks and all — which burns context on
+markup the agent does not need, this tool returns a compact, ranked text
+digest of just the answer box and the organic results.
 """
 
 import os
 
 import requests
-from crewai.tools import tool
+from langchain_core.tools import tool
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -51,8 +52,8 @@ def _serper_api_key() -> str:
     """
     Resolve the Serper API key at call time (not import time).
 
-    Reading it lazily keeps this module importable — and the rest of the crew
-    runnable — when SERPER_API_KEY is not configured.
+    Reading it lazily keeps this module importable — and the rest of the
+    pipeline runnable — when SERPER_API_KEY is not configured.
     """
     settings = get_settings()
     return settings.SERPER_API_KEY or os.environ.get("SERPER_API_KEY", "")
@@ -126,7 +127,7 @@ def web_search(query: str, num_results: int = DEFAULT_RESULTS) -> str:
 
     api_key = _serper_api_key()
     if not api_key:
-        logger.warning("crew.search_tools: SERPER_API_KEY is not configured.")
+        logger.warning("search_tools: SERPER_API_KEY is not configured.")
         return (
             "ERROR: Web search is unavailable because SERPER_API_KEY is not "
             "configured. Continue without web results."
@@ -146,7 +147,7 @@ def web_search(query: str, num_results: int = DEFAULT_RESULTS) -> str:
     except requests.HTTPError as e:
         status = e.response.status_code if e.response is not None else "unknown"
         logger.error(
-            "crew.search_tools: Serper returned HTTP %s for query %r", status, query
+            "search_tools: Serper returned HTTP %s for query %r", status, query
         )
         return (
             f"ERROR: The web search failed with HTTP status {status}. "
@@ -154,7 +155,7 @@ def web_search(query: str, num_results: int = DEFAULT_RESULTS) -> str:
         )
     except requests.RequestException as e:
         logger.error(
-            "crew.search_tools: Serper request failed for query %r: %s",
+            "search_tools: Serper request failed for query %r: %s",
             query, e, exc_info=True,
         )
         return (
@@ -164,7 +165,7 @@ def web_search(query: str, num_results: int = DEFAULT_RESULTS) -> str:
     except ValueError as e:
         # Non-JSON body — a proxy error page or a truncated response.
         logger.error(
-            "crew.search_tools: Serper returned a non-JSON response for query %r: %s",
+            "search_tools: Serper returned a non-JSON response for query %r: %s",
             query, e,
         )
         return (
@@ -173,7 +174,7 @@ def web_search(query: str, num_results: int = DEFAULT_RESULTS) -> str:
         )
 
     logger.info(
-        "crew.search_tools: web_search returned %d organic results for %r",
+        "search_tools: web_search returned %d organic results for %r",
         len(payload.get("organic") or []), query,
     )
     return _format_results(query, payload, num_results)

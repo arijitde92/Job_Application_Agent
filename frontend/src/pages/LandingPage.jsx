@@ -174,7 +174,7 @@ export default function LandingPage() {
         textAlign: 'center', padding: 'var(--space-8)', borderTop: '1px solid var(--border-subtle)',
         color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)',
       }}>
-        Built with CrewAI, FastAPI & React · {new Date().getFullYear()}
+        Built with LangChain, LangGraph, FastAPI & React · {new Date().getFullYear()}
       </footer>
     </div>
   );

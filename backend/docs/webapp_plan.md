@@ -1,5 +1,11 @@
 # Job Application Agent — Full-Stack Web Application Plan
 
+> **Note (2026-11):** this is the original build plan. The agent pipeline has
+> since moved from CrewAI to **LangChain agents orchestrated with LangGraph**
+> (`app/services/pipeline/`, driven by `app/services/pipeline_runner.py`) with
+> LangSmith tracing — see [backend/README.md](../README.md). References below to
+> CrewAI, `crew_runner` and `app/services/crew/` describe the pre-migration code.
+
 Build a production-grade web interface for the existing CrewAI-based Job Application Agent using **FastAPI** (backend), **React + Vite** (frontend), **Google Cloud SQL for MySQL** (user data), and **Google Cloud Storage** (resume files).
 
 ---

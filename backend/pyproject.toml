@@ -1,7 +1,7 @@
 [project]
 name = "job-application-agent-backend"
 version = "1.0.0"
-description = "AI-powered resume tailoring and interview preparation — FastAPI backend + CrewAI pipeline"
+description = "AI-powered resume tailoring and interview preparation — FastAPI backend + LangGraph agent pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -28,15 +28,24 @@ dependencies = [
     "google-auth>=2.25.0",
     # ── Google Cloud ───────────────────────────────────────────────────────
     "google-cloud-storage>=2.14.0",
-    # ── LLM / Agent pipeline (CrewAI) ──────────────────────────────────────
-    "crewai[anthropic]",
-    "crewai-tools[mcp]",
+    # ── LLM / Agent pipeline (LangChain + LangGraph) ───────────────────────
+    # LangChain 1.x agents (create_agent + middleware) orchestrated as a
+    # LangGraph StateGraph; LangSmith for tracing. One integration package per
+    # model provider: Gemini, Claude, and GLM-5.2 through Z.ai's
+    # OpenAI-compatible endpoint (langchain-openai).
+    "langchain>=1.3",
+    "langchain-core>=1.4",
+    "langgraph>=1.2",
+    "langsmith>=0.8",
+    "langchain-anthropic>=1.0",
+    "langchain-google-genai>=4.2",
+    "langchain-openai>=1.3",
+    "langchain-mcp-adapters>=0.2",
     # ── RAG / embeddings ───────────────────────────────────────────────────
-    # langchain is kept only for GithubFileLoader + the text splitter; the
-    # vector store and embeddings are the native Weaviate / Voyage SDKs.
-    # langchain-google-genai is still used by the RAGAS judge (tests/ragas).
+    # The vector store and embeddings are the native Weaviate / Voyage SDKs;
+    # langchain-community provides GithubFileLoader and langchain-text-splitters
+    # the chunker. langchain-google-genai (above) also backs the RAGAS judge.
     "langchain-community",
-    "langchain-google-genai",
     "langchain-text-splitters",
     "weaviate-client>=4.22,<5",
     "voyageai>=0.5,<1",
@@ -57,7 +66,7 @@ api-prod = "app.cli:api_prod"  # FastAPI production server (workers, no reload)
 frontend = "app.cli:frontend"  # Vite dev server (npm run dev)
 dev = "app.cli:dev"            # backend api + cloud SQL Proxy + frontend together
 db-proxy = "app.cli:db_proxy"  # Cloud SQL Auth Proxy (127.0.0.1:3306)
-crew = "app.cli:crew"          # CrewAI pipeline CLI
+pipeline = "app.cli:pipeline"  # LangGraph pipeline CLI
 
 [dependency-groups]
 dev = [
