@@ -150,43 +150,25 @@ printf 'the-new-value' | gcloud secrets versions add MYSQL_PASSWORD --data-file=
 
 ## 5. Build the backend image
 
-`backend/Dockerfile` is intentionally empty in the repo. Fill it with the
-following (a standard two-stage [uv](https://docs.astral.sh/uv/) build — deps
-are installed from `uv.lock`, only `app/` is shipped):
+[`backend/Dockerfile`](../Dockerfile) is a standard two-stage
+[uv](https://docs.astral.sh/uv/) build — deps are installed from `uv.lock`,
+only `app/` is shipped. The runtime stage also:
 
-```dockerfile
-# backend/Dockerfile
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
-WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+- installs the **Tectonic** release binary (`ARG TECTONIC_VERSION=0.17.0`,
+  static `x86_64-unknown-linux-musl` build) for LaTeX → PDF compiles;
+- **pre-warms Tectonic's package cache** into `/opt/tectonic-cache`
+  (`TECTONIC_CACHE_DIR`) by compiling a resume that uses every template
+  section once at build time. This cold compile downloads the TeX bundle and
+  takes ~3–4 min, so the build needs outbound network access (GitHub for
+  the binary, Tectonic's bundle host for the TeX packages);
+- sets `TECTONIC_ONLY_CACHED=true`, so runtime compiles (~2 s) never touch
+  the network;
+- runs `uvicorn` with exactly ONE worker on `$PORT` (see "runtime
+  constraints": job progress lives in process memory).
 
-FROM python:3.12-slim-bookworm
-WORKDIR /app
-COPY --from=builder /app/.venv /app/.venv
-COPY app ./app
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
-# Cloud Run injects PORT (default 8080). Exactly ONE worker — see
-# "runtime constraints": job progress lives in process memory.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]
-```
-
-Add a `backend/.dockerignore` so the build context stays small and **no
-credentials or local artifacts leak into the image**:
-
-```
-.venv/
-.env
-credentials/
-logs/
-tests/
-golden_dataset/
-sample_data/
-docs/
-__pycache__/
-*.pyc
-```
+[`backend/.dockerignore`](../.dockerignore) keeps the build context small and
+ensures **no credentials or local artifacts leak into the image** (`.env`,
+`credentials/`, `.venv/`, `logs/`, `tests/`, `sample_data/`, `docs/`, …).
 
 Build and push with Cloud Build (run from the repo root):
 
@@ -556,7 +538,7 @@ constraints bite (it wants a single long-lived process anyway).
 - [ ] Artifact Registry repo `job-agent` created
 - [ ] `job-agent-sa` granted `roles/secretmanager.secretAccessor`
 - [ ] All secrets created in Secret Manager (real values, not placeholders)
-- [ ] `backend/Dockerfile` + `.dockerignore` filled in; image built & pushed
+- [ ] Backend image built & pushed (`backend/Dockerfile`)
 - [ ] `service-api.yaml` filled in (project ID, bucket, Weaviate URL, OAuth client ID)
 - [ ] Backend deployed — `/api/health` returns healthy; tables auto-created
 - [ ] `frontend/Dockerfile`, `nginx.conf`, `cloudbuild.yaml` added; image built with OAuth client ID

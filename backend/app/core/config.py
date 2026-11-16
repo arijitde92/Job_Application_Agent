@@ -88,6 +88,25 @@ class Settings(BaseSettings):
         description="Read timeout (seconds) for the resume .docx generation service",
     )
 
+    # ── LaTeX → PDF resume (Tectonic) ─────────────────────────────────────
+    TECTONIC_PATH: str = Field(
+        default="tectonic",
+        description="Tectonic binary name (looked up on PATH) or absolute path",
+    )
+    TECTONIC_ONLY_CACHED: bool = Field(
+        default=False,
+        description="Pass --only-cached so Tectonic never fetches packages (use with a pre-warmed cache)",
+    )
+    LATEX_COMPILE_TIMEOUT_SECONDS: int = Field(
+        default=90, description="Kill a LaTeX compilation after this many seconds",
+    )
+    LATEX_MAX_CONCURRENT_COMPILES: int = Field(
+        default=2, description="Max concurrent on-demand PDF compilations in the API",
+    )
+    RESUME_PDF_CACHE_TTL_MINUTES: int = Field(
+        default=30, description="How long a compiled resume PDF stays in the server's temp cache",
+    )
+
     # ── LangSmith tracing ─────────────────────────────────────────────────
     # Traces contain resume text and other personal data — enable only for a
     # LangSmith workspace allowed to store applicant data.

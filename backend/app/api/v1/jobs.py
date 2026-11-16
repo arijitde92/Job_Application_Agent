@@ -25,7 +25,10 @@ from app.schemas import (
 )
 from app.api.deps import get_current_user
 from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.services.gcs_service import _RESUME_CONTENT_TYPES, download_file, delete_file
+from app.services.latex import pdf_cache
+from app.services.latex.service import LatexCompileError, get_resume_pdf_bytes
 from app.services.pipeline_runner import progress_store, run_pipeline_for_job
 from app.services.extractors.text_job_extractor import (
     ALLOWED_JOB_DESCRIPTION_EXTENSIONS,
@@ -35,7 +38,11 @@ from app.services.extractors.text_job_extractor import (
 )
 
 settings = get_settings()
+logger = get_logger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+
+# Bounds concurrent on-demand LaTeX compilations (each is a Tectonic process).
+_compile_semaphore = asyncio.Semaphore(settings.LATEX_MAX_CONCURRENT_COMPILES)
 
 
 @router.post("/description/extract", response_model=JobDescriptionTextResponse)
@@ -194,6 +201,7 @@ async def delete_job(
         job.tailored_resume_gcs_path,
         job.tailored_resume_md_gcs_path,
         job.tailored_resume_pdf_gcs_path,
+        job.tailored_resume_latex_gcs_path,
         job.interview_materials_gcs_path,
     }:
         if gcs_path:
@@ -201,6 +209,7 @@ async def delete_job(
                 delete_file(gcs_path)
             except Exception:
                 pass
+    pdf_cache.evict(job_id)
 
     await db.delete(job)
     await db.commit()
@@ -319,19 +328,66 @@ def _content_disposition(disposition: str, filename: str) -> str:
     )
 
 
+async def _compiled_resume_pdf(job: Job) -> bytes:
+    """
+    The job's PDF compiled from its stored LaTeX (temporary, never stored).
+
+    Calls the same compile function as the agent's compile_resume_pdf tool,
+    off the event loop and bounded by ``_compile_semaphore``.
+    """
+    try:
+        async with _compile_semaphore:
+            return await asyncio.to_thread(
+                get_resume_pdf_bytes, job.id, job.tailored_resume_latex_gcs_path
+            )
+    except LatexCompileError as e:
+        logger.error("jobs: on-demand PDF compilation failed for job %d: %s", job.id, e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The PDF could not be generated from the stored resume. Please try again.",
+        )
+    except Exception as e:  # noqa: BLE001 — e.g. the .tex is missing from GCS
+        logger.error("jobs: could not prepare the PDF for job %d: %s", job.id, e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The stored resume could not be loaded. Please try again.",
+        )
+
+
+def _pdf_filename(job: Job) -> str:
+    return (
+        f"{(job.company_name or 'tailored')}_{(job.job_name or 'resume')}_resume.pdf"
+    ).replace(" ", "_")
+
+
 @router.get("/{job_id}/resume/download")
 async def download_tailored_resume(
     job_id: int, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download the tailored resume — the generated .docx when the document
-    service succeeded, otherwise the Markdown file."""
+    """Download the tailored resume.
+
+    The PDF compiled on demand from the stored LaTeX when the job has one;
+    for older / fallback jobs the stored PDF, else the .docx or Markdown file.
+    """
     result = await db.execute(
         select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
     )
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
+    if job.tailored_resume_latex_gcs_path:
+        content = await _compiled_resume_pdf(job)
+        return Response(
+            content=content, media_type="application/pdf",
+            headers={"Content-Disposition": _content_disposition("attachment", _pdf_filename(job))},
+        )
+    if job.tailored_resume_pdf_gcs_path:
+        content = download_file(job.tailored_resume_pdf_gcs_path)
+        return Response(
+            content=content, media_type="application/pdf",
+            headers={"Content-Disposition": _content_disposition("attachment", _pdf_filename(job))},
+        )
     if not job.tailored_resume_gcs_path:
         raise HTTPException(status_code=404, detail="Tailored resume not available yet.")
     content = download_file(job.tailored_resume_gcs_path)
@@ -350,13 +406,23 @@ async def get_tailored_resume_pdf(
     job_id: int, current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Serve the PDF version of the tailored resume for in-browser viewing."""
+    """Serve the PDF of the tailored resume for in-browser viewing.
+
+    Compiled on demand from the stored LaTeX (returning users included); for
+    older / docx-fallback jobs the stored PDF is served.
+    """
     result = await db.execute(
         select(Job).where(Job.id == job_id, Job.user_id == current_user.id)
     )
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
+    if job.tailored_resume_latex_gcs_path:
+        content = await _compiled_resume_pdf(job)
+        return Response(
+            content=content, media_type="application/pdf",
+            headers={"Content-Disposition": _content_disposition("inline", _pdf_filename(job))},
+        )
     if not job.tailored_resume_pdf_gcs_path:
         raise HTTPException(status_code=404, detail="PDF version not available.")
     content = download_file(job.tailored_resume_pdf_gcs_path)

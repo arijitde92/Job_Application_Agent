@@ -98,9 +98,11 @@ def test_run_pipeline_sync_returns_outputs_from_graph_state(monkeypatch, steps):
     assert result["tailored_resume"] == "# Tailored"
     assert result["interview_materials"] == "# Interview"
     assert result["tailored_resume_docx"] is None  # no docx tool success
+    assert result["tailored_resume_latex_gcs_path"] is None  # no LaTeX tool success
     assert result["docx_filename"] == "ada_lovelace_Acme_Engineer_resume.docx"
     assert built["include_github"] is False
     assert built["docx_ctx"].job_id == 5
+    assert built["latex_ctx"].job_id == 5
     assert built["resume_ctx"].resume_text == built["resume_text"]
     assert "Ada Lovelace" in built["resume_text"]
 
@@ -112,3 +114,79 @@ def test_run_pipeline_sync_returns_outputs_from_graph_state(monkeypatch, steps):
     assert "github_url" not in inputs
     assert steps[:3] == ["extracting_job_info", "parsing_resume", "building_profile"]
     assert steps[-1] == "tailoring_resume"
+
+
+def _run_with_strategist(monkeypatch, strategist):
+    """Run _run_pipeline_sync with a fake graph; ``strategist(built)`` plays the tools."""
+    monkeypatch.setattr(
+        text_job_extractor, "extract_job_details_from_text",
+        lambda text: JobDetails(url="", job_name="Engineer", company_name="Acme", job_description=text),
+    )
+    built = {}
+
+    class Graph(FakeGraph):
+        def stream(self, state, config, stream_mode):
+            strategist(built)
+            yield from self.updates
+
+    graph = Graph([{"resume_strategy": {"tailored_resume_md": "# Tailored"}}])
+
+    def fake_build_pipeline(**kwargs):
+        built.update(kwargs)
+        return graph
+
+    monkeypatch.setattr(pipeline_graph, "build_pipeline", fake_build_pipeline)
+    result = pipeline_runner._run_pipeline_sync(
+        job_id=5, user_id=2, user_email="ada@example.com",
+        resume_bytes=RESUME_MD, resume_filename="resume.md", resume_id=9,
+        job_description_text="Backend engineer role at Acme. " * 5,
+    )
+    return result, built
+
+
+def test_compiled_latex_wins_and_the_pdf_stays_temporary(monkeypatch, steps):
+    import os
+
+    from app.services.latex import pdf_cache
+
+    cached = []
+    monkeypatch.setattr(pdf_cache, "put", lambda job_id, tex, pdf: cached.append((job_id, tex, open(pdf, "rb").read())))
+
+    def strategist(built):
+        ctx = built["latex_ctx"]
+        pdf = os.path.join(ctx.workdir, "resume.pdf")
+        with open(pdf, "wb") as f:
+            f.write(b"%PDF-1.7")
+        ctx.state.update(tex_source="TEX", pdf_path=pdf, gcs_path="gs://b/t/5_x.tex", latex_ok=True)
+        # A stray docx must be ignored when the LaTeX PDF compiled.
+        with open(built["docx_ctx"].output_path, "wb") as f:
+            f.write(b"PK docx")
+        built["docx_ctx"].state["docx_path"] = built["docx_ctx"].output_path
+
+    result, built = _run_with_strategist(monkeypatch, strategist)
+
+    assert result["tailored_resume_latex_gcs_path"] == "gs://b/t/5_x.tex"
+    assert result["tailored_resume_docx"] is None
+    assert result["tailored_resume_pdf"] is None  # the PDF is never uploaded
+    assert cached == [(5, "TEX", b"%PDF-1.7")]
+    assert not os.path.exists(built["latex_ctx"].workdir)  # temp PDF removed
+
+
+def test_uncompiled_latex_is_discarded_for_the_docx_fallback(monkeypatch, steps):
+    import app.services.gcs_service as gcs_service
+
+    deleted = []
+    monkeypatch.setattr(gcs_service, "delete_file", deleted.append)
+    monkeypatch.setattr("app.services.docx_to_pdf.convert_docx_to_pdf", lambda path: None)
+
+    def strategist(built):
+        built["latex_ctx"].state.update(tex_source="TEX", gcs_path="gs://b/t/5_x.tex", latex_ok=True)
+        with open(built["docx_ctx"].output_path, "wb") as f:
+            f.write(b"PK docx")
+        built["docx_ctx"].state["docx_path"] = built["docx_ctx"].output_path
+
+    result, _ = _run_with_strategist(monkeypatch, strategist)
+
+    assert result["tailored_resume_latex_gcs_path"] is None
+    assert result["tailored_resume_docx"] == b"PK docx"
+    assert deleted == ["gs://b/t/5_x.tex"]

@@ -52,7 +52,7 @@ backend/
 ├── tests/                      # Pytest suite
 │   └── ragas/                  # RAGAS eval harness + run results (see below)
 ├── pyproject.toml              # Dependencies (managed by uv)
-├── Dockerfile                  # (intentionally empty for now)
+├── Dockerfile                  # Cloud Run image (uv + Tectonic, see docs/GCP_deployment.md)
 └── .env.example                # Copy to .env and fill in
 ```
 
@@ -181,16 +181,81 @@ Independently of LangSmith, every web run also writes a readable step-by-step
 log (node starts/ends, tool calls, model answers) to
 `backend/logs/<timestamp>_job<id>_pipeline.log`.
 
-## DOCX resume generation (+ PDF preview)
+## PDF resume generation (LaTeX → PDF)
 
-In the web app, the Resume Strategist agent does more than write Markdown:
-after tailoring the content it assembles it into a structured resume JSON and
-calls the per-run **`generate_resume_docx`** tool
+In the web app the final tailored resume is a **PDF compiled from LaTeX**,
+built from the template in
+[app/services/latex/templates/resume.tex.j2](app/services/latex/templates/resume.tex.j2).
+After tailoring the content, the Resume Strategist agent calls two
+deterministic per-run tools
+([app/services/pipeline/tools/latex_tools.py](app/services/pipeline/tools/latex_tools.py)):
+
+1. **`generate_resume_latex`** — its arguments are the tailored resume,
+   validated by the Pydantic schema
+   [`TailoredResume`](app/services/latex/schemas.py) (dates normalised to
+   `SEP 2025` / `PRESENT`, URLs normalised, `**bold**` balanced, …). The
+   renderer ([app/services/latex/renderer.py](app/services/latex/renderer.py))
+   escapes every value (no LaTeX injection) and produces byte-identical
+   output for identical input. Section order is decided deterministically
+   by [app/services/latex/layout.py](app/services/latex/layout.py):
+   - internships (`is_internship: true`, or "Intern"/"Internship" in the
+     title) are shown only when the candidate has no other work experience;
+   - when total non-intern experience (merged date ranges, in months) is
+     none or under 1 year, the order is Summary → Education → Skills → Work
+     Experience → Projects → Certifications → Publications; otherwise
+     Summary → Work Experience → Education → Skills → Projects →
+     Publications → Certifications.
+
+   The `.tex` is uploaded to
+   `gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.tex`
+   and recorded on `jobs.tailored_resume_latex_gcs_path`.
+2. **`compile_resume_pdf`** (no arguments) — compiles that `.tex` with
+   **Tectonic** ([app/services/latex/compiler.py](app/services/latex/compiler.py),
+   `--untrusted`). A compile error is returned to the agent, which fixes the
+   content and regenerates.
+
+Each tool allows 3 attempts; if the LaTeX route fails for good, the agent
+falls back to the `.docx` service below.
+
+**The PDF is never stored.** It lives only in a temp directory and in a
+short-lived server-side cache
+([app/services/latex/pdf_cache.py](app/services/latex/pdf_cache.py),
+`RESUME_PDF_CACHE_TTL_MINUTES`). *View* and *Download*
+(`GET /api/jobs/{id}/resume/pdf`, `/resume/download`) compile the stored
+`.tex` on demand with the same function — so a returning user always gets
+their PDF regenerated from GCS.
+
+**System dependency — [Tectonic](https://tectonic-typesetting.github.io):**
+
+```bash
+# Linux (single binary); macOS: brew install tectonic; Windows: scoop install tectonic
+curl --proto '=https' --tlsv1.2 -fsSL https://drop-sh.fullyjustified.net | sh
+```
+
+The first compile downloads the TeX packages it needs (~3–4 min) and caches
+them; later compiles take ~2 s. Warm the cache once before running real jobs
+— a cold compile exceeds `LATEX_COMPILE_TIMEOUT_SECONDS` (90 s) and the agent
+would fall back to docx. Set `TECTONIC_PATH` if the binary is not on
+`PATH`, and `TECTONIC_ONLY_CACHED=true` once the cache is pre-warmed (e.g. in
+the Docker image) so compiling never needs the network.
+
+## DOCX resume generation (fallback)
+
+When the LaTeX route fails, the Resume Strategist agent falls back to the
+per-run **`generate_resume_docx`** tool
 ([app/services/pipeline/tools/docx_tools.py](app/services/pipeline/tools/docx_tools.py)), which
 POSTs to an external document service (`RESUME_DOCX_SERVICE_URL`) and receives
 a polished Word (.docx) resume named
 `{applicant_name}_{company_name}_{job_name}_resume.docx`.
 
+- **Layout:** the tool applies the same rules as the LaTeX route
+  ([app/services/latex/layout.py](app/services/latex/layout.py)) to the
+  metadata `section_order` and the experience list — internships dropped when
+  there is actual work experience, and the early-career order when total
+  experience is none or under 1 year. Experienced candidates keep the
+  service's default order (Summary → Experience → Education → Skills →
+  Publications → Projects → Certifications). `is_internship` is stripped
+  before the request.
 - **Retries / fallback:** the agent gets at most **3 tool attempts**; the tool
   enforces the cap. If the service stays unavailable, the run completes
   exactly as before — the Markdown resume is uploaded and served.

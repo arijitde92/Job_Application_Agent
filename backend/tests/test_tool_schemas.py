@@ -11,9 +11,12 @@ from app.services.pipeline.tools import (
     GithubIndexContext,
     ResumeAnalysisContext,
     ResumeDocxContext,
+    ResumeLatexContext,
     calculate_yoe,
+    make_compile_resume_pdf_tool,
     make_extract_github_repos_tool,
     make_generate_resume_docx_tool,
+    make_generate_resume_latex_tool,
     make_read_resume_tool,
     make_repo_content_searcher_tool,
     make_save_parsed_resume_tool,
@@ -34,19 +37,40 @@ def github_ctx():
 def test_tool_names_match_the_prompts(tmp_path, github_ctx):
     ctx = ResumeAnalysisContext(user_id=1, resume_id=1, user_name="u", local_only=True)
     docx_ctx = ResumeDocxContext("a", "c", "j", 1, str(tmp_path / "x.docx"))
+    latex_ctx = ResumeLatexContext(1, 1, "a", "c", "j", str(tmp_path))
     tools = [
         calculate_yoe, web_search, scrape_website,
         make_read_resume_tool("r.md"), make_save_parsed_resume_tool(ctx),
         make_generate_resume_docx_tool(docx_ctx),
+        make_generate_resume_latex_tool(latex_ctx), make_compile_resume_pdf_tool(latex_ctx),
         make_extract_github_repos_tool(github_ctx), make_repo_content_searcher_tool(github_ctx),
     ]
     assert [t.name for t in tools] == [
         "calculate_yoe", "web_search", "scrape_website", "read_resume",
-        "save_parsed_resume", "generate_resume_docx", "github_repos_extractor",
-        "repo_content_searcher",
+        "save_parsed_resume", "generate_resume_docx", "generate_resume_latex",
+        "compile_resume_pdf", "github_repos_extractor", "repo_content_searcher",
     ]
     for t in tools:
         assert t.description.strip(), f"{t.name} has no description"
+
+
+def test_generate_resume_latex_takes_the_structured_resume(tmp_path):
+    """The Pydantic schema is the tool's argument schema, fully inlined."""
+    tool = make_generate_resume_latex_tool(ResumeLatexContext(1, 1, "a", "c", "j", str(tmp_path)))
+    params = _parameters(tool)
+    assert set(params["properties"]) == {
+        "personal_information", "summary", "experience", "education", "skills",
+        "projects", "publications", "certifications",
+    }
+    assert params["required"] == ["personal_information"]
+    assert "$ref" not in str(params)
+    experience_item = params["properties"]["experience"]["items"]
+    assert {"job_title", "company", "start_date", "end_date", "bullets"} <= set(experience_item["properties"])
+
+
+def test_compile_resume_pdf_takes_no_arguments(tmp_path):
+    tool = make_compile_resume_pdf_tool(ResumeLatexContext(1, 1, "a", "c", "j", str(tmp_path)))
+    assert _parameters(tool).get("properties", {}) == {}
 
 
 def test_calculate_yoe_takes_an_array():

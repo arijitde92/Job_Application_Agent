@@ -30,6 +30,8 @@ def _all_rendered_descriptions() -> list[str]:
         prompts.profile_description(False),
         prompts.resume_strategy_description(True, True),
         prompts.resume_strategy_description(False, False),
+        prompts.resume_strategy_description(True, True, True),
+        prompts.resume_strategy_description(False, False, True),
         prompts.INTERVIEW_PREPARATION_DESCRIPTION,
     ]
 
@@ -60,6 +62,41 @@ def test_docx_step_only_with_docx():
     assert "generate_resume_docx" not in prompts.resume_strategy_description(True, False)
     assert ".docx" in prompts.resume_strategy_expected_output(True)
     assert ".docx" not in prompts.resume_strategy_expected_output(False)
+
+
+def test_latex_step_with_docx_as_fallback():
+    description = prompts.resume_strategy_description(True, True, True)
+    latex_at = description.index("generate_resume_latex")
+    compile_at = description.index("compile_resume_pdf")
+    fallback_at = description.index("FALLBACK ONLY")
+    assert latex_at < compile_at < fallback_at
+    assert "generate_resume_docx" in description[fallback_at:]
+    assert description.rstrip().endswith("complete tailored resume in Markdown.")
+    rendered = prompts.interpolate(description, INPUTS)
+    assert '"personal_information": {"name": ""' in rendered
+
+    expected = prompts.resume_strategy_expected_output(True, True)
+    assert "compile_resume_pdf" in expected and "only if that failed" in expected
+
+
+def test_latex_step_without_docx_has_no_fallback():
+    description = prompts.resume_strategy_description(False, False, True)
+    assert "compile_resume_pdf" in description
+    assert "generate_resume_docx" not in description
+    assert ".docx" not in prompts.resume_strategy_expected_output(False, True)
+
+
+@pytest.mark.parametrize("with_docx,with_latex", [(False, True), (True, True), (True, False)])
+def test_document_steps_explain_internship_flag_and_automatic_layout(with_docx, with_latex):
+    description = prompts.interpolate(
+        prompts.resume_strategy_description(True, with_docx, with_latex), INPUTS
+    )
+    assert '"is_internship": false' in description
+    assert "Do NOT reorder sections or drop internships yourself" in description
+
+
+def test_markdown_only_prompt_has_no_layout_rules():
+    assert "is_internship" not in prompts.resume_strategy_description(True, False, False)
 
 
 def test_no_github_profile_prompt_carries_grounding_rules():

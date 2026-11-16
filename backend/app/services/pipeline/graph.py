@@ -50,6 +50,7 @@ from app.services.pipeline.tools import (
     GithubIndexContext,
     ResumeAnalysisContext,
     ResumeDocxContext,
+    ResumeLatexContext,
 )
 
 if TYPE_CHECKING:
@@ -155,6 +156,7 @@ def build_pipeline(
     resume_path: str,
     resume_ctx: ResumeAnalysisContext | None = None,
     github_ctx: GithubIndexContext | None = None,
+    latex_ctx: ResumeLatexContext | None = None,
     docx_ctx: ResumeDocxContext | None = None,
     models: ModelRegistry | None = None,
 ) -> "CompiledStateGraph":
@@ -174,9 +176,13 @@ def build_pipeline(
         github_ctx: The applicant's GitHub identity, closured into the
             indexing and search tools so the vector search is scoped to their
             own repositories. Required when ``include_github`` is True.
+        latex_ctx: Job identity + work directory for the resume strategist's
+            generate_resume_latex / compile_resume_pdf tools (the final PDF
+            resume). When None (standalone CLI) the tools are not attached.
         docx_ctx: Job identity + output path for the resume strategist's
-            generate_resume_docx tool. When None (standalone CLI) the tool is
-            not attached and the strategist produces the Markdown resume only.
+            generate_resume_docx tool — the fallback when ``latex_ctx`` is
+            also given. When both are None (standalone CLI) the strategist
+            produces the Markdown resume only.
         models: Model registry (defaults to the production models).
 
     Returns:
@@ -197,10 +203,11 @@ def build_pipeline(
         )
     models = models or default_registry()
     with_docx = docx_ctx is not None
+    with_latex = latex_ctx is not None
 
     # Agents are compiled once per run, with this run's tools.
     profiler = build_profiler_agent(resume_path, models)
-    strategist = build_resume_strategist_agent(resume_path, models, docx_ctx)
+    strategist = build_resume_strategist_agent(resume_path, models, latex_ctx, docx_ctx)
     interview_preparer = build_interview_preparer_agent(resume_path, models)
 
     def github_summary(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
@@ -239,9 +246,10 @@ def build_pipeline(
             context.insert(1, (prompts.GITHUB_SUMMARY_LABEL, state["github_summary"]))
         message = prompts.render_task_message(
             prompts.interpolate(
-                prompts.resume_strategy_description(include_github, with_docx), state["inputs"]
+                prompts.resume_strategy_description(include_github, with_docx, with_latex),
+                state["inputs"],
             ),
-            prompts.resume_strategy_expected_output(with_docx),
+            prompts.resume_strategy_expected_output(with_docx, with_latex),
             context=context,
             markdown=True,
         )

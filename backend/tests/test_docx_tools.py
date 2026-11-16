@@ -12,6 +12,7 @@ exception.
 """
 
 import json
+from datetime import date
 
 import pytest
 import requests
@@ -107,6 +108,84 @@ def test_metadata_envelope_is_deterministic(tmp_path, posted):
     # Only the sections present in the resume, in the default order, and
     # never personal_information (it is the document header).
     assert meta["section_order"] == ["summary", "experience", "skills"]
+
+
+def test_internship_flag_is_not_sent(tmp_path, posted):
+    resume = json.loads(json.dumps(SAMPLE_RESUME))
+    resume["experience"][0]["is_internship"] = False
+    make_generate_resume_docx_tool(make_ctx(tmp_path)).invoke({"resume_json": json.dumps(resume)})
+
+    assert posted[0]["json"]["resume"] == SAMPLE_RESUME
+
+
+# ── Shared layout rules (app.services.latex.layout) ──────────────────────────
+
+FULL_SECTIONS = dict(
+    education=[{"degree": "B.Tech", "institution": "IIT"}],
+    publications=[{"citation": "A paper."}],
+    projects=[{"name": "Engine", "bullets": ["b"]}],
+    certifications=[{"name": "Cert", "issuer": "Org"}],
+)
+EARLY_CAREER_DOCX_ORDER = [
+    "summary", "education", "skills", "experience",
+    "projects", "certifications", "publications",
+]
+
+
+def _intern(title="ML Intern", start="JAN 2025", end="JUN 2025", flag=True):
+    return {"job_title": title, "company": "Lab", "start_date": start,
+            "end_date": end, "bullets": ["b"], "is_internship": flag}
+
+
+def _post(tmp_path, posted, experience):
+    resume = dict(SAMPLE_RESUME, experience=experience, **FULL_SECTIONS)
+    ctx = make_ctx(tmp_path)
+    make_generate_resume_docx_tool(ctx).invoke({"resume_json": json.dumps(resume)})
+    return posted[-1]["json"], ctx
+
+
+def test_experienced_candidate_keeps_default_order_and_drops_internships(tmp_path, posted):
+    payload, ctx = _post(tmp_path, posted, SAMPLE_RESUME["experience"] + [_intern()])
+
+    assert payload["resume"]["experience"] == SAMPLE_RESUME["experience"]
+    assert payload["metadata"]["section_order"] == [
+        "summary", "experience", "education", "skills",
+        "publications", "projects", "certifications",
+    ]
+    assert ctx.state["layout"].startswith("standard layout")
+
+
+def test_internships_only_uses_early_career_order_and_keeps_them(tmp_path, posted):
+    # The second one is detected from its title alone; the flag arrives as a string.
+    interns = [_intern(), _intern("Research Internship", "MAY 2024", "JUL 2024", flag="false")]
+    payload, ctx = _post(tmp_path, posted, interns)
+
+    assert [e["job_title"] for e in payload["resume"]["experience"]] == [
+        "ML Intern", "Research Internship",
+    ]
+    assert all("is_internship" not in e for e in payload["resume"]["experience"])
+    assert payload["metadata"]["section_order"] == EARLY_CAREER_DOCX_ORDER
+    assert ctx.state["layout"].startswith("early-career layout (no full-time")
+
+
+def test_under_a_year_uses_early_career_order_without_internships(tmp_path, posted):
+    this_month = date.today().strftime("%B %Y")  # e.g. "November 2026" → 1 month
+    job = {"job_title": "Engineer", "company": "Co", "start_date": this_month,
+           "end_date": "PRESENT", "bullets": ["b"]}
+    payload, _ = _post(tmp_path, posted, [job, _intern()])
+
+    assert [e["job_title"] for e in payload["resume"]["experience"]] == ["Engineer"]
+    assert payload["metadata"]["section_order"] == EARLY_CAREER_DOCX_ORDER
+
+
+def test_unparseable_dates_are_treated_as_unknown(tmp_path, posted):
+    job = {"job_title": "Engineer", "company": "Co", "start_date": "the 90s",
+           "end_date": "??", "bullets": ["b"]}
+    payload, _ = _post(tmp_path, posted, [job])
+
+    # A real position with unknown dates: 0 months → early-career, still shown.
+    assert payload["resume"]["experience"] == [job]
+    assert payload["metadata"]["section_order"] == EARLY_CAREER_DOCX_ORDER
 
 
 def test_section_order_includes_all_present_sections(tmp_path, posted):

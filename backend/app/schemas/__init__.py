@@ -130,6 +130,8 @@ class JobResponse(BaseModel):
     tailored_resume_gcs_path: Optional[str] = None
     tailored_resume_md_gcs_path: Optional[str] = None
     tailored_resume_pdf_gcs_path: Optional[str] = None
+    # Set when the final resume is LaTeX; its PDF is compiled on demand.
+    tailored_resume_latex_gcs_path: Optional[str] = None
     interview_materials_gcs_path: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

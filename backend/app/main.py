@@ -23,6 +23,13 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create tables; best-effort fail jobs stuck >3h; dispose engine on shutdown."""
+    # Compiled resume PDFs are temporary files only — start from an empty cache.
+    try:
+        from app.services.latex import pdf_cache
+        pdf_cache.purge_all()
+    except Exception as exc:  # noqa: BLE001 — never let cache cleanup break startup
+        logger.warning("Startup PDF cache purge skipped: %s", exc)
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -44,13 +51,17 @@ async def lifespan(app: FastAPI):
             logger.warning("Startup parsed_resume_path migration skipped: %s", exc)
 
         # Same lightweight-migration policy: add the jobs columns for the
-        # docx/pdf tailored-resume artifacts (written by the pipeline runner) if
+        # md/pdf/latex tailored-resume artifacts (written by the pipeline) if
         # they are missing. Idempotent and best-effort.
         try:
             def _add_tailored_artifact_columns(sync_conn):
                 from sqlalchemy import inspect, text
                 columns = {c["name"] for c in inspect(sync_conn).get_columns("jobs")}
-                for column in ("tailored_resume_md_gcs_path", "tailored_resume_pdf_gcs_path"):
+                for column in (
+                    "tailored_resume_md_gcs_path",
+                    "tailored_resume_pdf_gcs_path",
+                    "tailored_resume_latex_gcs_path",
+                ):
                     if column not in columns:
                         sync_conn.execute(text(
                             f"ALTER TABLE jobs ADD COLUMN {column} VARCHAR(500) NULL"
@@ -120,6 +131,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Downloads take their filename from this header; cross-origin JS can
+    # only read it when it is exposed.
+    expose_headers=["Content-Disposition"],
 )
 
 # ── Routers (versioned under /api) ────────────────────────────────────────────

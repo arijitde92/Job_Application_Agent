@@ -12,6 +12,7 @@ tools (``calculate_yoe``, ``web_search``, ``scrape_website``) are module-level.
 from app.services.pipeline.tools.docx_tools import (
     ResumeDocxContext,
     build_docx_filename,
+    build_resume_filename,
     make_generate_resume_docx_tool,
 )
 from app.services.pipeline.tools.github_tools import (
@@ -19,6 +20,11 @@ from app.services.pipeline.tools.github_tools import (
     github_username_from_url,
     make_extract_github_repos_tool,
     make_repo_content_searcher_tool,
+)
+from app.services.pipeline.tools.latex_tools import (
+    ResumeLatexContext,
+    make_compile_resume_pdf_tool,
+    make_generate_resume_latex_tool,
 )
 from app.services.pipeline.tools.resume_tools import (
     ResumeAnalysisContext,
@@ -33,11 +39,15 @@ __all__ = [
     "GithubIndexContext",
     "ResumeAnalysisContext",
     "ResumeDocxContext",
+    "ResumeLatexContext",
     "build_docx_filename",
+    "build_resume_filename",
     "calculate_yoe",
     "github_username_from_url",
+    "make_compile_resume_pdf_tool",
     "make_extract_github_repos_tool",
     "make_generate_resume_docx_tool",
+    "make_generate_resume_latex_tool",
     "make_read_resume_tool",
     "make_repo_content_searcher_tool",
     "make_save_parsed_resume_tool",

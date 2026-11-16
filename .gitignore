@@ -189,3 +189,4 @@ backend/tests/ragas/agents/*/v*/run_*/answers/
 backend/tests/ragas/agents/*/v*/run_*/scores.csv
 sample_data/
 golden_dataset/
+backend/tectonic.exe

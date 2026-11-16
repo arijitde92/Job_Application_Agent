@@ -2,11 +2,15 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiEye, FiDownload, FiBookOpen, FiTrash2, FiRefreshCw } from 'react-icons/fi';
 import api from '../services/api';
+import { downloadFromApi, jobHasPdf } from '../services/download';
 
 export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh, onRetry }) {
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState(null);
   const [retryingId, setRetryingId] = useState(null);
+  // "<jobId>:<type>" of the download in progress — the resume PDF is compiled
+  // on demand, which can take a few seconds.
+  const [downloading, setDownloading] = useState(null);
 
   const handleRetry = async (job) => {
     setRetryingId(job.id);
@@ -39,23 +43,26 @@ export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh, o
   };
 
   const downloadFile = async (jobId, type) => {
+    const key = `${jobId}:${type}`;
+    setDownloading(key);
     try {
+      // The resume is the PDF (compiled on demand) when available, otherwise
+      // the stored .docx/.md — the server sets the type and filename.
       const url = type === 'resume'
         ? `/jobs/${jobId}/resume/download`
         : `/jobs/${jobId}/interview/download`;
-      const res = await api.get(url, { responseType: 'blob' });
-      // The tailored resume may be .docx (or .md as fallback) — take the type
-      // and filename from the server instead of assuming markdown.
-      const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = res.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '') || type;
-      link.click();
-      URL.revokeObjectURL(link.href);
+      await downloadFromApi(url, type);
     } catch (err) {
       console.error('Download failed:', err);
+      alert('Download failed. Please try again.');
+    } finally {
+      setDownloading((current) => (current === key ? null : current));
     }
   };
+
+  const downloadIcon = (jobId, type) => (downloading === `${jobId}:${type}`
+    ? <span className="spinner" style={{ width: 14, height: 14 }} />
+    : <FiDownload size={14} />);
 
   if (!jobs || jobs.length === 0) {
     return (
@@ -92,11 +99,13 @@ export default function TailoredResumeList({ jobs, onPreviewResume, onRefresh, o
                 <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/interview/${job.id}`)}>
                   <FiBookOpen size={14} /> Interview Prep
                 </button>
-                <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'resume')} title="Download Resume">
-                  <FiDownload size={14} /> Resume
+                <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'resume')}
+                  disabled={downloading === `${job.id}:resume`} title="Download Resume">
+                  {downloadIcon(job.id, 'resume')} {jobHasPdf(job) ? 'Resume (PDF)' : 'Resume'}
                 </button>
-                <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'interview')} title="Download Interview">
-                  <FiDownload size={14} /> Interview
+                <button className="btn btn-ghost btn-sm" onClick={() => downloadFile(job.id, 'interview')}
+                  disabled={downloading === `${job.id}:interview`} title="Download Interview">
+                  {downloadIcon(job.id, 'interview')} Interview
                 </button>
               </>
             )}

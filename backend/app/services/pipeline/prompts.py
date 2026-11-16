@@ -320,23 +320,16 @@ _RESUME_NO_GITHUB_CLAUSE = (
     "in the applicant profile / original resume. Rephrase and reorder for fit only.\n"
 )
 
-# The .docx generation step, appended only when the run has a
-# ResumeDocxContext (the web app). The standalone CLI builds no context, gets
-# no generate_resume_docx tool, and must not be instructed to call one.
-_RESUME_DOCX_STEP = (
-    "\nAfter the tailored content is ready, render it as a polished Word "
-    "document:\n"
-    "  1. Build ONE compact JSON object (single line, no markdown fences, no "
-    "comments, no trailing commas) containing ONLY the tailored resume "
-    "content, with EXACTLY these top-level keys — omit any section the "
-    "applicant has no content for:\n"
+# The resume content structure shared by the document tools: the structured
+# arguments of generate_resume_latex and the JSON of generate_resume_docx.
+_RESUME_CONTENT_SHAPE = (
     "{\n"
     "  \"personal_information\": {\"name\": \"\", \"location\": \"\", "
     "\"email\": \"\", \"phone\": \"\", \"github\": \"\", \"linkedin\": \"\"},\n"
     "  \"summary\": \"\",\n"
     "  \"experience\": [{\"job_title\": \"\", \"company\": \"\", "
     "\"location\": \"\", \"work_mode\": \"\", \"start_date\": \"\", "
-    "\"end_date\": \"\", \"bullets\": [\"\"]}],\n"
+    "\"end_date\": \"\", \"bullets\": [\"\"], \"is_internship\": false}],\n"
     "  \"education\": [{\"degree\": \"\", \"institution\": \"\", "
     "\"location\": \"\", \"gpa\": \"\", \"start_date\": \"\", "
     "\"end_date\": \"\"}],\n"
@@ -346,7 +339,9 @@ _RESUME_DOCX_STEP = (
     "  \"certifications\": [{\"name\": \"\", \"issuer\": \"\", \"year\": \"\", "
     "\"url\": \"\"}]\n"
     "}\n"
-    "     Rules for this JSON:\n"
+)
+
+_RESUME_CONTENT_RULES = (
     "  - It carries the TAILORED content (the reworked summary and the "
     "reordered, keyword-aligned bullets), not the original resume verbatim.\n"
     "  - \"skills\" is a LIST of category objects. The parsed-resume JSON "
@@ -357,6 +352,66 @@ _RESUME_DOCX_STEP = (
     "technologies.\n"
     "  - Use short uppercase month-year dates as shown on the resume (e.g. "
     "\"SEP 2025\") and \"PRESENT\" as the end_date of the current position.\n"
+    "  - Include every experience entry from the parsed resume, internships "
+    "too, and set \"is_internship\": true on each internship (false for every "
+    "other position). Always give the start_date and end_date — they decide "
+    "the layout.\n"
+)
+
+# Layout rules both document tools apply on their own (app.services.latex.layout);
+# told to the agent so it does not try to reorder sections or drop entries.
+_RESUME_LAYOUT_RULES = (
+    "  - Do NOT reorder sections or drop internships yourself — the layout is "
+    "applied automatically: internships are shown only when the applicant has "
+    "no other work experience, and when total work experience is under one "
+    "year (or none) Education and Skills are placed before Work Experience.\n"
+)
+
+# The LaTeX → PDF step, appended only when the run has a ResumeLatexContext
+# (the web app). The standalone CLI builds no context, gets no document tools,
+# and must not be instructed to call them.
+_RESUME_LATEX_STEP = (
+    "\nAfter the tailored content is ready, produce the final PDF resume:\n"
+    "  1. Call the generate_resume_latex tool, passing the tailored resume as "
+    "its structured arguments with EXACTLY this structure — omit any section "
+    "the applicant has no content for:\n"
+    + _RESUME_CONTENT_SHAPE +
+    "     Rules for these arguments:\n"
+    + _RESUME_CONTENT_RULES
+    + _RESUME_LAYOUT_RULES +
+    "  - Write plain text only — no LaTeX commands; special characters are "
+    "escaped automatically.\n"
+    "  2. When generate_resume_latex returns SUCCESS, call compile_resume_pdf "
+    "(it takes no arguments).\n"
+    "  3. If either tool returns an ERROR, fix the reported problem and call "
+    "generate_resume_latex again (then compile_resume_pdf) — each tool allows "
+    "at most 3 attempts. After compile_resume_pdf returns SUCCESS, do NOT call "
+    "any document tool again.\n"
+)
+
+# Appended after the LaTeX step when the run also has a ResumeDocxContext.
+_RESUME_DOCX_FALLBACK_STEP = (
+    "  4. FALLBACK ONLY: if a LaTeX tool returns an ERROR telling you to stop, "
+    "call the generate_resume_docx tool with the same content as ONE compact "
+    "JSON object (single line, no markdown fences, no comments, no trailing "
+    "commas) as its resume_json argument; if it returns an ERROR, fix it and "
+    "retry — at most 3 attempts. Never call generate_resume_docx after "
+    "compile_resume_pdf succeeded.\n"
+)
+
+# The .docx generation step for a run with a ResumeDocxContext but no
+# ResumeLatexContext.
+_RESUME_DOCX_STEP = (
+    "\nAfter the tailored content is ready, render it as a polished Word "
+    "document:\n"
+    "  1. Build ONE compact JSON object (single line, no markdown fences, no "
+    "comments, no trailing commas) containing ONLY the tailored resume "
+    "content, with EXACTLY these top-level keys — omit any section the "
+    "applicant has no content for:\n"
+    + _RESUME_CONTENT_SHAPE +
+    "     Rules for this JSON:\n"
+    + _RESUME_CONTENT_RULES
+    + _RESUME_LAYOUT_RULES +
     "  2. Call the generate_resume_docx tool with that JSON as its "
     "resume_json argument. The metadata envelope (template, page size, "
     "document name, section order) is added automatically — do NOT include "
@@ -364,19 +419,29 @@ _RESUME_DOCX_STEP = (
     "  3. If the tool returns an ERROR, fix the reported problem and call it "
     "again — you have at most 3 attempts in total. After a SUCCESS, or an "
     "ERROR that tells you to stop, do NOT call the tool again.\n"
-    "Whether or not the .docx was generated, your final answer MUST be the "
+)
+
+_RESUME_MARKDOWN_ANSWER = (
+    "Whether or not a document was generated, your final answer MUST be the "
     "complete tailored resume in Markdown.\n"
 )
 
 
-def resume_strategy_description(include_github: bool, with_docx: bool) -> str:
+def resume_strategy_description(
+    include_github: bool, with_docx: bool, with_latex: bool = False
+) -> str:
     """
-    Resume strategy task — tailor the resume to the job and, when ``with_docx``
-    (the web app), render it as a .docx via the generate_resume_docx tool.
+    Resume strategy task — tailor the resume to the job and, in the web app,
+    render the final document.
+
+    With ``with_latex`` the agent generates the LaTeX resume and compiles the
+    PDF (generate_resume_latex → compile_resume_pdf), with generate_resume_docx
+    as the fallback when ``with_docx`` too. With only ``with_docx`` it renders
+    a .docx via generate_resume_docx.
 
     The final answer is ALWAYS the tailored resume in Markdown — it feeds the
-    interview task's context and is the fallback artifact when the document
-    service is unavailable.
+    interview task's context and is the fallback artifact when no document
+    could be generated.
     """
     clause = _RESUME_GITHUB_CLAUSE if include_github else _RESUME_NO_GITHUB_CLAUSE
     description = (
@@ -392,19 +457,31 @@ def resume_strategy_description(include_github: bool, with_docx: bool) -> str:
         "and institutions, publications, and certifications — copy those facts "
         "exactly and never invent contact details or URLs.\n"
     )
-    if with_docx:
-        description += _RESUME_DOCX_STEP
+    if with_latex:
+        description += _RESUME_LATEX_STEP
+        if with_docx:
+            description += _RESUME_DOCX_FALLBACK_STEP
+        description += _RESUME_MARKDOWN_ANSWER
+    elif with_docx:
+        description += _RESUME_DOCX_STEP + _RESUME_MARKDOWN_ANSWER
     return description
 
 
-def resume_strategy_expected_output(with_docx: bool) -> str:
+def resume_strategy_expected_output(with_docx: bool, with_latex: bool = False) -> str:
     """Acceptance criteria for the resume strategy task."""
     expected = (
         "An updated resume in Markdown format that effectively highlights the "
         "candidate's qualifications and experiences most relevant to the "
         "target role."
     )
-    if with_docx:
+    if with_latex:
+        expected += (
+            " The tailored resume has also been generated as LaTeX via "
+            "generate_resume_latex and compiled into the PDF via compile_resume_pdf"
+            + (" (or, only if that failed, as a .docx via generate_resume_docx)."
+               if with_docx else ".")
+        )
+    elif with_docx:
         expected += (
             " When the document service is available, a polished .docx version "
             "has also been generated via the generate_resume_docx tool."

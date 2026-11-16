@@ -21,6 +21,7 @@ dependencies = [
     # ── Config & validation ────────────────────────────────────────────────
     "pydantic[email]>=2.0",
     "pydantic-settings>=2.0",
+    "jinja2>=3.1",  # LaTeX resume template rendering
     "python-dotenv>=1.0.0",
     # ── Auth ───────────────────────────────────────────────────────────────
     "python-jose[cryptography]>=3.3.0",

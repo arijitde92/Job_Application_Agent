@@ -13,6 +13,7 @@ the frontend reflects a node that actually finished.
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -165,6 +166,7 @@ def _run_pipeline_sync(
     # them even when the graph build fails before they are assigned.
     docx_output = None
     pdf_output = None
+    latex_workdir = None
     run_log = None
 
     try:
@@ -177,6 +179,7 @@ def _run_pipeline_sync(
             GithubIndexContext,
             ResumeAnalysisContext,
             ResumeDocxContext,
+            ResumeLatexContext,
             build_docx_filename,
             github_username_from_url,
         )
@@ -225,9 +228,23 @@ def _run_pipeline_sync(
             display_name=user_name or applicant_name,
         )
 
+        # Identity + work directory for the strategist's LaTeX tools: the .tex
+        # is uploaded to GCS by generate_resume_latex, and the PDF compiled by
+        # compile_resume_pdf lives only in this temp directory (removed below).
+        latex_workdir = tempfile.mkdtemp(prefix=f"job{job_id}_latex_")
+        latex_ctx = ResumeLatexContext(
+            user_id=user_id,
+            job_id=job_id,
+            applicant_name=applicant_name,
+            company_name=job_details.company_name,
+            job_name=job_details.job_name,
+            workdir=latex_workdir,
+        )
+
         graph = build_pipeline(
             include_github=include_github, resume_path=resume_path,
-            resume_ctx=resume_ctx, github_ctx=github_ctx, docx_ctx=docx_ctx,
+            resume_ctx=resume_ctx, github_ctx=github_ctx,
+            latex_ctx=latex_ctx, docx_ctx=docx_ctx,
         )
 
         inputs = PipelineInputs(
@@ -260,13 +277,52 @@ def _run_pipeline_sync(
         tailored_resume_content = state.get("tailored_resume_md", "")
         interview_content = state.get("interview_materials_md", "")
 
-        # The strategist's generate_resume_docx tool writes the .docx to
-        # docx_ctx.output_path and records it in ctx.state on success. The
-        # bytes (not the temp paths) go into the result so this thread can
-        # clean up its temps regardless of what the async side does.
+        # Preferred artifact: the LaTeX resume (in GCS) whose PDF compiled. The
+        # compiled PDF is NOT uploaded — it seeds the short-lived server-side
+        # PDF cache so the first "View" is instant, and is deleted with the
+        # temp work directory. Otherwise fall back to the .docx flow.
         tailored_resume_docx = None
         tailored_resume_pdf = None
-        if docx_ctx.state.get("docx_path") and os.path.exists(docx_output):
+        latex_gcs_path = None
+        latex_pdf = latex_ctx.state.get("pdf_path")
+        if latex_pdf and os.path.exists(latex_pdf) and latex_ctx.state.get("gcs_path"):
+            latex_gcs_path = latex_ctx.state["gcs_path"]
+            try:
+                from app.services.latex import pdf_cache
+                pdf_cache.put(job_id, latex_ctx.state["tex_source"], latex_pdf)
+            except Exception as e:  # noqa: BLE001 — the cache is an optimisation only
+                logger.warning("pipeline_runner: could not cache the PDF for job %d: %s", job_id, e)
+            logger.info(
+                "pipeline_runner: LaTeX resume for job %d stored at %s; PDF compiled "
+                "(%d generate / %d compile attempt(s))",
+                job_id, latex_gcs_path, latex_ctx.state.get("latex_attempts", 0),
+                latex_ctx.state.get("compile_attempts", 0),
+            )
+        else:
+            logger.info(
+                "pipeline_runner: no compiled LaTeX resume for job %d (%d generate / "
+                "%d compile attempt(s)) — trying the .docx fallback",
+                job_id, latex_ctx.state.get("latex_attempts", 0),
+                latex_ctx.state.get("compile_attempts", 0),
+            )
+            # A .tex uploaded but never compiled is not a usable artifact.
+            if latex_ctx.state.get("gcs_path"):
+                try:
+                    from app.services.gcs_service import delete_file
+                    delete_file(latex_ctx.state["gcs_path"])
+                except Exception as e:  # noqa: BLE001 — best-effort cleanup
+                    logger.warning(
+                        "pipeline_runner: could not delete the uncompiled .tex for job %d: %s",
+                        job_id, e,
+                    )
+
+        # The strategist's generate_resume_docx tool (the fallback) writes the
+        # .docx to docx_ctx.output_path and records it in ctx.state on
+        # success. The bytes (not the temp paths) go into the result so this
+        # thread can clean up its temps regardless of what the async side does.
+        if latex_gcs_path:
+            pass  # the LaTeX/PDF resume wins; a stray .docx is ignored
+        elif docx_ctx.state.get("docx_path") and os.path.exists(docx_output):
             with open(docx_output, "rb") as f:
                 tailored_resume_docx = f.read()
             logger.info(
@@ -294,6 +350,7 @@ def _run_pipeline_sync(
 
         return {
             "tailored_resume": tailored_resume_content,
+            "tailored_resume_latex_gcs_path": latex_gcs_path,
             "tailored_resume_docx": tailored_resume_docx,
             "tailored_resume_pdf": tailored_resume_pdf,
             "docx_filename": docx_filename,
@@ -308,6 +365,10 @@ def _run_pipeline_sync(
         for path in (resume_path, raw_resume_path, docx_output, pdf_output):
             if path and os.path.exists(path):
                 os.unlink(path)
+        # The LaTeX work directory holds the .tex and the compiled PDF — the
+        # PDF is a temporary file only.
+        if latex_workdir:
+            shutil.rmtree(latex_workdir, ignore_errors=True)
 
 
 async def run_pipeline_for_job(
@@ -422,12 +483,14 @@ async def run_pipeline_for_job(
                 user_id, job_id, result["interview_materials"], "interview.md"
             )
 
-        # The download target: the .docx replaces the .md when it exists.
+        # The stored download target: the .docx replaces the .md when it
+        # exists. LaTeX jobs serve a PDF compiled on demand from
+        # tailored_resume_latex_gcs_path instead (see api/v1/jobs.py).
         tailored_gcs = docx_gcs or md_gcs
 
-        # Update job record. All three tailored-resume columns are set every
-        # run (None when absent) so a retried job never keeps a stale
-        # artifact path from an earlier run.
+        # Update job record. All tailored-resume columns are set every run
+        # (None when absent) so a retried job never keeps a stale artifact
+        # path from an earlier run.
         async with AsyncSessionLocal() as db:
             from app.models import Job
             await db.execute(
@@ -436,6 +499,7 @@ async def run_pipeline_for_job(
                     tailored_resume_gcs_path=tailored_gcs,
                     tailored_resume_md_gcs_path=md_gcs,
                     tailored_resume_pdf_gcs_path=pdf_gcs,
+                    tailored_resume_latex_gcs_path=result.get("tailored_resume_latex_gcs_path"),
                     interview_materials_gcs_path=interview_gcs,
                     completed_at=datetime.utcnow(),
                 )

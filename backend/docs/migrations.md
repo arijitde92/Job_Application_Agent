@@ -60,3 +60,23 @@ ALTER TABLE jobs ADD COLUMN job_description_input TEXT NULL AFTER linkedin_job_u
 
 **Fresh databases:** no action needed — `create_all` builds both columns from
 the updated model.
+
+---
+
+## 2026-11-16 — LaTeX source of the final PDF resume
+
+**Why:** The final tailored resume is now a PDF compiled from LaTeX. The
+`.tex` file is stored in GCS and its path recorded on the new nullable column
+`jobs.tailored_resume_latex_gcs_path`; the PDF itself is compiled on demand
+and never stored.
+
+**Applied automatically on startup** by `app/main.py` (part of the idempotent
+tailored-artifact-columns migration). If that step logs "migration skipped",
+apply it by hand:
+
+```sql
+ALTER TABLE jobs ADD COLUMN tailored_resume_latex_gcs_path VARCHAR(500) NULL;
+```
+
+**Fresh databases:** no action needed — `create_all` builds the column from
+the updated model.

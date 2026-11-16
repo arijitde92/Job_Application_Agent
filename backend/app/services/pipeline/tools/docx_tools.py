@@ -39,13 +39,17 @@ from langchain_core.tools import BaseTool, tool
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.latex.layout import ResumeLayout, plan_layout_for_dict
 from app.services.pipeline.tools.resume_tools import _strip_code_fences
 
 logger = get_logger(__name__)
 
-# Section order the service renders when every section is present. The tool
-# filters this to the sections the agent actually supplied; personal_information
-# is deliberately absent — it is the document header, not an ordered section.
+# Section order the service renders for an experienced candidate when every
+# section is present. The tool filters this to the sections the agent actually
+# supplied, and switches to the shared early-career order (education and skills
+# first) when total work experience is under one year — see
+# app.services.latex.layout. personal_information is deliberately absent — it
+# is the document header, not an ordered section.
 _DEFAULT_SECTION_ORDER = (
     "summary",
     "experience",
@@ -89,13 +93,20 @@ def sanitize_filename_component(text: str, max_len: int = 60) -> str:
     return cleaned[:max_len] if cleaned else "resume"
 
 
-def build_docx_filename(applicant_name: str, company_name: str, job_name: str) -> str:
-    """The generated resume's filename: {applicant}_{company}_{job}_resume.docx."""
+def build_resume_filename(
+    applicant_name: str, company_name: str, job_name: str, extension: str
+) -> str:
+    """A generated resume's filename: {applicant}_{company}_{job}_resume.<extension>."""
     return (
         f"{sanitize_filename_component(applicant_name)}"
         f"_{sanitize_filename_component(company_name)}"
-        f"_{sanitize_filename_component(job_name)}_resume.docx"
+        f"_{sanitize_filename_component(job_name)}_resume.{extension.lstrip('.')}"
     )
+
+
+def build_docx_filename(applicant_name: str, company_name: str, job_name: str) -> str:
+    """The generated resume's filename: {applicant}_{company}_{job}_resume.docx."""
+    return build_resume_filename(applicant_name, company_name, job_name, "docx")
 
 
 def _coerce_resume_object(resume_json: Any) -> dict:
@@ -127,17 +138,40 @@ def _coerce_resume_object(resume_json: Any) -> dict:
     )
 
 
+def _apply_layout(resume: dict, layout: ResumeLayout) -> dict:
+    """
+    The resume with only the experience entries the layout shows, minus the
+    ``is_internship`` flag (a layout input the docx service does not know).
+    """
+    if not isinstance(resume.get("experience"), list):
+        return resume
+    shown = [
+        {k: v for k, v in e.items() if k != "is_internship"} if isinstance(e, dict) else e
+        for e in layout.experience
+    ]
+    return {**resume, "experience": shown}
+
+
 def _build_payload(resume: dict, ctx: ResumeDocxContext, attempt: int) -> dict:
-    """Wrap the agent's resume object in the service's metadata envelope."""
+    """
+    Wrap the agent's resume object in the service's metadata envelope.
+
+    The shared layout rules (app.services.latex.layout) decide the section
+    order and drop internships when there is actual work experience — the same
+    rules the LaTeX route applies.
+    """
+    layout = plan_layout_for_dict(resume, _DEFAULT_SECTION_ORDER)
+    ctx.state["layout"] = layout.describe()
+    logger.info("docx_tools: job %d uses the %s", ctx.job_id, layout.describe())
     return {
         "metadata": {
             "request_id": f"job-{ctx.job_id}-attempt-{attempt}",
             "template": "modern",
             "document_name": f"{ctx.display_name or ctx.applicant_name} Resume",
             "page_size": "letter",
-            "section_order": [s for s in _DEFAULT_SECTION_ORDER if resume.get(s)],
+            "section_order": list(layout.sections),
         },
-        "resume": resume,
+        "resume": _apply_layout(resume, layout),
     }
 
 
@@ -169,7 +203,7 @@ def make_generate_resume_docx_tool(ctx: ResumeDocxContext) -> BaseTool:
                 "personal_information" (object: name, location, email, phone,
                 github, linkedin), "summary" (string), "experience" (list of
                 objects: job_title, company, location, work_mode, start_date,
-                end_date, bullets), "education" (list of objects: degree,
+                end_date, bullets, is_internship), "education" (list of objects: degree,
                 institution, location, gpa, start_date, end_date), "skills"
                 (LIST of objects, each with "category" and "skills" keys),
                 "publications" (list of objects with "citation"), "projects"

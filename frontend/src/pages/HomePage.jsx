@@ -9,6 +9,8 @@ import TailorResumeForm from '../components/TailorResumeForm';
 import ProgressTracker from '../components/ProgressTracker';
 import ResumePreviewModal from '../components/ResumePreviewModal';
 import ResumeReadyModal from '../components/ResumeReadyModal';
+import PdfViewerModal from '../components/PdfViewerModal';
+import { jobHasPdf } from '../services/download';
 import { FiActivity, FiSettings, FiSend } from 'react-icons/fi';
 
 export default function HomePage() {
@@ -19,6 +21,9 @@ export default function HomePage() {
   const [activeJobId, setActiveJobId] = useState(null);
   const [activeJobHasGithub, setActiveJobHasGithub] = useState(true);
   const [completedJob, setCompletedJob] = useState(null);
+  // View Resume: the PDF pop-up viewer when the job has a PDF, otherwise the
+  // Markdown preview (older jobs / no document generated).
+  const [pdfJob, setPdfJob] = useState(null);
   const [previewJobId, setPreviewJobId] = useState(null);
   const [previewResumeId, setPreviewResumeId] = useState(null);
 
@@ -58,6 +63,12 @@ export default function HomePage() {
     fetchData();
   };
 
+  const openResume = (jobId, knownJob = null) => {
+    const job = knownJob || jobs.find((j) => j.id === jobId);
+    if (jobHasPdf(job)) setPdfJob(job);
+    else setPreviewJobId(jobId);
+  };
+
   const handleComplete = useCallback(async () => {
     try {
       const res = await api.get(`/jobs/${activeJobId}`);
@@ -83,7 +94,7 @@ export default function HomePage() {
           <h2 style={{ fontSize: 'var(--font-size-xl)', marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
             <FiActivity size={20} color="var(--accent-secondary)" /> Previously Tailored Resumes
           </h2>
-          <TailoredResumeList jobs={jobs} onPreviewResume={(id) => setPreviewJobId(id)} onRefresh={fetchData} onRetry={handleRetry} />
+          <TailoredResumeList jobs={jobs} onPreviewResume={(id) => openResume(id)} onRefresh={fetchData} onRetry={handleRetry} />
         </section>
 
         <section style={{ marginBottom: 'var(--space-10)' }}>
@@ -113,13 +124,15 @@ export default function HomePage() {
         )}
       </main>
 
+      {pdfJob && <PdfViewerModal job={pdfJob}
+        onClose={() => setPdfJob(null)}
+        onViewText={() => { setPreviewJobId(pdfJob.id); setPdfJob(null); }} />}
       {previewJobId && <ResumePreviewModal jobId={previewJobId}
-        hasPdf={!!jobs.find((j) => j.id === previewJobId)?.tailored_resume_pdf_gcs_path}
         onClose={() => setPreviewJobId(null)} />}
       {previewResumeId && <ResumePreviewModal resumeId={previewResumeId} onClose={() => setPreviewResumeId(null)} />}
       {completedJob && <ResumeReadyModal job={completedJob}
         onClose={() => { setCompletedJob(null); fetchData(); }}
-        onPreviewResume={(id) => { setCompletedJob(null); setPreviewJobId(id); }} />}
+        onPreviewResume={(id) => { const job = completedJob; setCompletedJob(null); openResume(id, job); }} />}
     </div>
   );
 }

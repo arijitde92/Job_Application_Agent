@@ -33,6 +33,7 @@ from app.services.pipeline.tools import (
     GithubIndexContext,
     ResumeAnalysisContext,
     ResumeDocxContext,
+    ResumeLatexContext,
 )
 from app.services.resume_parser import ParsedResume
 from tests.lc_fakes import (
@@ -236,6 +237,72 @@ def test_strategist_gets_docx_tool_only_with_docx_ctx(resume_path, tmp_path):
     strategist = fakes[AgentRole.RESUME_STRATEGIST]
     assert "generate_resume_docx" in strategist.bound_tool_names[0]
     assert "generate_resume_docx" in _human_prompt(strategist)
+    assert "generate_resume_latex" not in strategist.bound_tool_names[0]
+
+
+def test_strategist_gets_latex_tools_with_docx_fallback(resume_path, tmp_path):
+    models, fakes = make_models()
+    latex_ctx = ResumeLatexContext(
+        user_id=1, job_id=1, applicant_name="ada", company_name="Acme",
+        job_name="Eng", workdir=str(tmp_path), local_only=True,
+    )
+    docx_ctx = ResumeDocxContext(
+        applicant_name="ada", company_name="Acme", job_name="Eng", job_id=1,
+        output_path=str(tmp_path / "out.docx"),
+    )
+    graph = build_pipeline(
+        include_github=False, resume_path=resume_path, resume_ctx=make_ctx(),
+        latex_ctx=latex_ctx, docx_ctx=docx_ctx, models=models,
+    )
+    graph.invoke({"inputs": INPUTS}, build_run_config(include_github=False))
+
+    strategist = fakes[AgentRole.RESUME_STRATEGIST]
+    assert {"generate_resume_latex", "compile_resume_pdf", "generate_resume_docx"} <= set(
+        strategist.bound_tool_names[0]
+    )
+    prompt = _human_prompt(strategist)
+    assert prompt.index("generate_resume_latex") < prompt.index("FALLBACK ONLY")
+
+
+def test_strategist_generates_latex_and_compiles_the_pdf(resume_path, tmp_path, monkeypatch):
+    """Structured args go through the real agent loop, schema and tools."""
+    from app.services.latex.compiler import CompileResult
+    from app.services.pipeline.tools import latex_tools
+    from tests.latex_fixtures import sample_resume
+
+    def fake_compile(tex, workdir):
+        pdf = tmp_path / "resume.pdf"
+        pdf.write_bytes(b"%PDF-1.7")
+        return CompileResult(ok=True, pdf_path=str(pdf))
+
+    monkeypatch.setattr(latex_tools, "compile_latex_to_pdf", fake_compile)
+    bad = sample_resume()
+    bad["experience"][0]["start_date"] = "sometime"
+    strategist = FakeToolCallingChatModel(responses=[
+        ai_calls(tool_call("generate_resume_latex", bad)),          # schema rejects
+        ai_calls(tool_call("generate_resume_latex", sample_resume())),
+        ai_calls(tool_call("compile_resume_pdf")),
+        AIMessage(content="# Ada Lovelace\nTailored resume"),
+    ])
+    models, _ = make_models(**{AgentRole.RESUME_STRATEGIST: strategist})
+    latex_ctx = ResumeLatexContext(
+        user_id=1, job_id=1, applicant_name="ada", company_name="Acme",
+        job_name="Eng", workdir=str(tmp_path), local_only=True,
+    )
+    graph = build_pipeline(
+        include_github=False, resume_path=resume_path, resume_ctx=make_ctx(),
+        latex_ctx=latex_ctx, models=models,
+    )
+
+    state = graph.invoke({"inputs": INPUTS}, build_run_config(include_github=False))
+
+    assert state["tailored_resume_md"].startswith("# Ada Lovelace")
+    assert latex_ctx.state["latex_attempts"] == 2
+    assert latex_ctx.state["pdf_path"].endswith("resume.pdf")
+    assert "{Acme, Singapore}{SEP 2025 -- PRESENT}" in latex_ctx.state["tex_source"]
+    tool_results = [m.text for m in strategist.calls[1] if m.type == "tool"]
+    assert tool_results[-1].startswith("ERROR: The resume content failed validation")
+    assert "experience.0.start_date" in tool_results[-1]
 
 
 def test_resume_analysis_failure_aborts_before_profile(resume_path):

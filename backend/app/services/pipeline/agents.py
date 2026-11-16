@@ -42,9 +42,12 @@ from app.services.pipeline.tools import (
     GithubIndexContext,
     ResumeAnalysisContext,
     ResumeDocxContext,
+    ResumeLatexContext,
     calculate_yoe,
+    make_compile_resume_pdf_tool,
     make_extract_github_repos_tool,
     make_generate_resume_docx_tool,
+    make_generate_resume_latex_tool,
     make_read_resume_tool,
     make_repo_content_searcher_tool,
     make_save_parsed_resume_tool,
@@ -140,30 +143,32 @@ PROFILER = AgentSpec(
     ),
 )
 
-# max_iter leaves headroom for up to 3 docx attempts on top of the read /
-# search calls and the final Markdown answer.
+# max_iter leaves headroom for up to 3 generate_resume_latex + 3
+# compile_resume_pdf calls, the docx fallback's attempts, the read / search
+# calls and the final Markdown answer.
 RESUME_STRATEGIST = AgentSpec(
     name=AgentRole.RESUME_STRATEGIST,
     role="Resume Strategist for Engineers",
     goal=(
         "Find all the best ways to make a resume stand out in the job market, "
-        "and deliver it as a polished, professionally formatted .docx document "
-        "via the document-generation service."
+        "and deliver it as a polished, professionally typeset PDF compiled "
+        "from LaTeX."
     ),
     backstory=(
         "With a strategic mind and an eye for detail, you "
         "excel at refining resumes to highlight the most "
         "relevant skills and experiences, ensuring they "
         "resonate perfectly with the job's requirements. "
-        "Once the tailored content is ready, you assemble it into a structured "
-        "resume JSON and call the generate_resume_docx tool to render a "
-        "polished Word document. When the tool reports an ERROR you fix the "
-        "input and try again, but never more than 3 attempts in total; if the "
-        "service stays unavailable you fall back gracefully. Whether or not "
-        "the .docx was generated, your final answer is always the complete "
-        "tailored resume in Markdown."
+        "Once the tailored content is ready, you pass it as structured "
+        "arguments to the generate_resume_latex tool, which renders the LaTeX "
+        "resume, and then call the compile_resume_pdf tool to compile the PDF. "
+        "When a tool reports an ERROR you fix the input and try again, but "
+        "never more than 3 attempts per tool; only if the LaTeX route fails "
+        "for good do you fall back to the generate_resume_docx tool. Whether "
+        "or not a document was generated, your final answer is always the "
+        "complete tailored resume in Markdown."
     ),
-    max_iter=10,
+    max_iter=16,
 )
 
 INTERVIEW_PREPARER = AgentSpec(
@@ -280,13 +285,20 @@ def build_profiler_agent(resume_path: str, models: ModelRegistry) -> "CompiledSt
 
 
 def build_resume_strategist_agent(
-    resume_path: str, models: ModelRegistry, docx_ctx: ResumeDocxContext | None = None
+    resume_path: str,
+    models: ModelRegistry,
+    latex_ctx: ResumeLatexContext | None = None,
+    docx_ctx: ResumeDocxContext | None = None,
 ) -> "CompiledStateGraph":
     """
-    The Resume Strategist: tailor the resume. With a ``docx_ctx`` (the web
-    app) it also gets the generate_resume_docx tool.
+    The Resume Strategist: tailor the resume. With a ``latex_ctx`` (the web
+    app) it also gets the generate_resume_latex and compile_resume_pdf tools,
+    and with a ``docx_ctx`` the generate_resume_docx fallback tool.
     """
     tools: list["BaseTool"] = [scrape_website, web_search, make_read_resume_tool(resume_path)]
+    if latex_ctx is not None:
+        tools.append(make_generate_resume_latex_tool(latex_ctx))
+        tools.append(make_compile_resume_pdf_tool(latex_ctx))
     if docx_ctx is not None:
         tools.append(make_generate_resume_docx_tool(docx_ctx))
     return build_agent(RESUME_STRATEGIST, models.get(AgentRole.RESUME_STRATEGIST), tools)

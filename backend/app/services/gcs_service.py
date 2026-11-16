@@ -8,8 +8,9 @@ Bucket structure:
     gs://<bucket>/uploads/<user_id>/<filename>           — User-uploaded original resumes (.md/.pdf/.docx)
     gs://<bucket>/parsed/<user_id>/<name>_<user_id>_<resume_id>_parsed_resume.json — Agent-parsed resume JSON
     gs://<bucket>/tailored/<user_id>/<job_id>_resume.md  — Tailored resume, Markdown (always)
-    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.docx — Tailored resume, Word (when the docx service succeeded)
-    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.pdf  — Tailored resume, PDF (when docx→pdf conversion succeeded)
+    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.tex  — Tailored resume, LaTeX source of the final PDF (the PDF itself is compiled on demand, never stored)
+    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.docx — Tailored resume, Word (docx fallback, when the LaTeX route failed)
+    gs://<bucket>/tailored/<user_id>/<job_id>_<applicant>_<company>_<job>_resume.pdf  — Tailored resume, PDF converted from the fallback .docx
     gs://<bucket>/tailored/<user_id>/<job_id>_interview.md — Agent-generated interview materials
 """
 
@@ -26,6 +27,7 @@ _RESUME_CONTENT_TYPES = {
     ".md": "text/markdown",
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".tex": "application/x-tex",
 }
 
 

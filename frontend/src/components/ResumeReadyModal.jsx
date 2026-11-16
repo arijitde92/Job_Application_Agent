@@ -1,29 +1,32 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiEye, FiDownload, FiBookOpen, FiX } from 'react-icons/fi';
-import api from '../services/api';
+import { downloadFromApi, jobHasPdf } from '../services/download';
 
 export default function ResumeReadyModal({ job, onClose, onPreviewResume }) {
   const navigate = useNavigate();
+  const [downloading, setDownloading] = useState(null);
 
   const downloadFile = async (type) => {
+    setDownloading(type);
     try {
+      // The resume is the PDF (compiled on demand) when available, otherwise
+      // the stored .docx/.md — the server sets the type and filename.
       const url = type === 'resume'
         ? `/jobs/${job.id}/resume/download`
         : `/jobs/${job.id}/interview/download`;
-      const res = await api.get(url, { responseType: 'blob' });
-      // The tailored resume may be .docx (or .md as fallback) — take the type
-      // and filename from the server instead of assuming markdown.
-      const blob = new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = res.headers['content-disposition']?.split('filename=')[1]?.replace(/"/g, '')
-        || `${type}_${job.company_name || 'output'}`;
-      link.click();
-      URL.revokeObjectURL(link.href);
+      await downloadFromApi(url, `${type}_${job.company_name || 'output'}`);
     } catch (err) {
       console.error('Download failed:', err);
+      alert('Download failed. Please try again.');
+    } finally {
+      setDownloading(null);
     }
   };
+
+  const icon = (type, size) => (downloading === type
+    ? <span className="spinner" style={{ width: size, height: size }} />
+    : <FiDownload size={size} />);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -48,11 +51,13 @@ export default function ResumeReadyModal({ job, onClose, onPreviewResume }) {
             <FiBookOpen size={18} /> View Interview Materials
           </button>
           <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
-            <button className="btn btn-ghost btn-lg" onClick={() => downloadFile('resume')} style={{ flex: 1 }}>
-              <FiDownload size={16} /> Resume
+            <button className="btn btn-ghost btn-lg" onClick={() => downloadFile('resume')}
+              disabled={downloading === 'resume'} style={{ flex: 1 }}>
+              {icon('resume', 16)} {jobHasPdf(job) ? 'Resume (PDF)' : 'Resume'}
             </button>
-            <button className="btn btn-ghost btn-lg" onClick={() => downloadFile('interview')} style={{ flex: 1 }}>
-              <FiDownload size={16} /> Interview
+            <button className="btn btn-ghost btn-lg" onClick={() => downloadFile('interview')}
+              disabled={downloading === 'interview'} style={{ flex: 1 }}>
+              {icon('interview', 16)} Interview
             </button>
           </div>
         </div>
