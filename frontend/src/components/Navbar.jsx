@@ -25,7 +25,7 @@ export default function Navbar() {
             JobAgent
           </span>
         </Link>
-        {user && (
+        {user ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
               {user.first_name} {user.last_name}
@@ -33,6 +33,11 @@ export default function Navbar() {
             <button className="btn btn-ghost btn-sm" onClick={handleLogout} id="logout-btn">
               <FiLogOut size={16} /> Logout
             </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+            <Link to="/login" className="btn btn-ghost btn-sm" id="nav-login-btn">Login</Link>
+            <Link to="/register" className="btn btn-primary btn-sm" id="nav-get-started-btn">Get Started</Link>
           </div>
         )}
       </div>

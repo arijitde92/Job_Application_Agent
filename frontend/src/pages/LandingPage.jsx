@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import LoginSection from '../components/LoginSection';
+import Navbar from '../components/Navbar';
 import { FiUpload, FiLink, FiCpu, FiTarget, FiGithub, FiSearch, FiZap, FiFileText } from 'react-icons/fi';
 
 const PROBLEMS = [
@@ -25,6 +25,8 @@ const FEATURES = [
 export default function LandingPage() {
   return (
     <div style={{ minHeight: '100vh' }}>
+      <Navbar />
+
       {/* ── Hero ──────────────────────────────────────────────────── */}
       <section style={{
         position: 'relative', overflow: 'hidden',
@@ -53,7 +55,7 @@ export default function LandingPage() {
             and tailor your resume for maximum impact.
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-4)' }}>
-            <a href="#auth-section" className="btn btn-primary btn-lg">Get Started</a>
+            <Link to="/register" className="btn btn-primary btn-lg">Get Started</Link>
             <a href="#how-it-works" className="btn btn-secondary btn-lg">Learn More</a>
           </div>
         </div>
@@ -136,35 +138,18 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Auth Section ──────────────────────────────────────────── */}
-      <section id="auth-section" style={{ padding: 'var(--space-20) var(--space-6)' }}>
+      {/* ── Call to action ────────────────────────────────────────── */}
+      <section style={{ padding: 'var(--space-20) var(--space-6)', textAlign: 'center' }}>
         <div className="container">
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-            gap: 'var(--space-8)', maxWidth: 800, margin: '0 auto',
-          }}>
-            {/* Login side */}
-            <div className="glass-card" style={{ padding: 'var(--space-8)' }}>
-              <h3 style={{ fontSize: 'var(--font-size-2xl)', marginBottom: 'var(--space-2)' }}>Welcome Back</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-6)' }}>
-                Sign in to your account
-              </p>
-              <LoginSection />
-            </div>
-
-            {/* Register side */}
-            <div className="glass-card" style={{
-              padding: 'var(--space-8)', display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center', textAlign: 'center',
-            }}>
-              <h3 style={{ fontSize: 'var(--font-size-2xl)', marginBottom: 'var(--space-2)' }}>New Here?</h3>
-              <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)', marginBottom: 'var(--space-6)', maxWidth: 280 }}>
-                Create an account and start tailoring your resume with AI
-              </p>
-              <Link to="/register" className="btn btn-primary btn-lg" id="go-register-btn">
-                Create Account
-              </Link>
-            </div>
+          <h2 style={{ fontSize: 'var(--font-size-3xl)', marginBottom: 'var(--space-4)' }}>
+            Ready to land your <span style={{ color: 'var(--accent-secondary)' }}>next role</span>?
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', maxWidth: 480, margin: '0 auto var(--space-8)' }}>
+            Create an account and start tailoring your resume with AI.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
+            <Link to="/login" className="btn btn-secondary btn-lg" id="go-login-btn">Log In</Link>
+            <Link to="/register" className="btn btn-primary btn-lg" id="go-register-btn">Get Started</Link>
           </div>
         </div>
       </section>

@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import LandingPage from './pages/LandingPage';
+import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import HomePage from './pages/HomePage';
 import InterviewMaterialsPage from './pages/InterviewMaterialsPage';
@@ -14,7 +15,7 @@ function ProtectedRoute({ children }) {
       </div>
     );
   }
-  return user ? children : <Navigate to="/" replace />;
+  return user ? children : <Navigate to="/login" replace />;
 }
 
 export default function App() {
@@ -31,7 +32,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={user ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
-      <Route path="/register" element={user ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
+      <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+      <Route path="/register"element={user ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
       <Route path="/dashboard" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
       <Route path="/interview/:jobId" element={<ProtectedRoute><InterviewMaterialsPage /></ProtectedRoute>} />
     </Routes>
