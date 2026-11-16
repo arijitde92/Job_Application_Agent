@@ -6,6 +6,9 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  // True after an explicit logout, so route guards send the user to the home
+  // page instead of the login page.
+  const [loggedOut, setLoggedOut] = useState(false);
 
   const fetchUser = useCallback(async () => {
     const token = localStorage.getItem('token');
@@ -30,16 +33,18 @@ export function AuthProvider({ children }) {
 
   const login = (token) => {
     localStorage.setItem('token', token);
+    setLoggedOut(false);
     fetchUser();
   };
 
   const logout = () => {
     localStorage.removeItem('token');
+    setLoggedOut(true);
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, loggedOut, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

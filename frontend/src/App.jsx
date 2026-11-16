@@ -7,7 +7,7 @@ import HomePage from './pages/HomePage';
 import InterviewMaterialsPage from './pages/InterviewMaterialsPage';
 
 function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth();
+  const { user, loading, loggedOut } = useAuth();
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -15,7 +15,9 @@ function ProtectedRoute({ children }) {
       </div>
     );
   }
-  return user ? children : <Navigate to="/login" replace />;
+  // After an explicit logout go to the home page; otherwise (e.g. an expired
+  // session or a direct visit to a protected URL) go to the login page.
+  return user ? children : <Navigate to={loggedOut ? '/' : '/login'} replace />;
 }
 
 export default function App() {
